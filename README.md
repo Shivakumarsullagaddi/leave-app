@@ -137,7 +137,17 @@ Gmail accounts outside the Darukaa domain can't be identified by a web app, so t
 3. While Slack is off, emails go to the test accounts in `LD_CONFIG.TEST_EMAILS`.
 4. Before go-live, set `TEST_MODE` to FALSE.
 
-## Google sign-in (any Google account)
+## Sign-in modes
+
+| Mode | When | Setup |
+|---|---|---|
+| **Built-in (current, for testing)** | No OAuth keys in Script Properties | Deploy as *User accessing the web app* + *Anyone with Google account*; share the Sheet (Editor) with each user. Google signs people in. |
+| **Workspace (go-live)** | No OAuth keys | Deploy as *Me* + *Anyone within Darukaa.Earth*. No sharing needed; Darukaa accounts only. |
+| **OAuth** | Both OAuth keys set | See below. |
+
+`checkSignIn` reports which mode is active.
+
+## Google sign-in via OAuth (optional)
 
 1. In Google Cloud Console, create an **OAuth client ID** of type **Web application**.
    - Authorized redirect URI = the web app `/exec` URL, which must match `Settings.APP_URL` exactly.

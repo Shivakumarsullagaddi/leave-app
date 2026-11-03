@@ -125,19 +125,39 @@ const TestTeam = (() => {
   return { apply };
 })();
 
-/** Reports what Google sign-in still needs. Run from the editor or the Leave Desk menu. */
+/**
+ * Reports how people sign in, and what is still missing. Run from the editor or the Leave Desk menu.
+ *  - Built-in mode (no OAuth keys): Google signs people in; deploy as "User accessing the web app".
+ *  - OAuth mode (both keys set): our own "Sign in with Google"; deploy as "Me" + "Anyone".
+ */
 function checkSignIn() {
   const props = PropertiesService.getScriptProperties();
   const id = props.getProperty('OAUTH_CLIENT_ID') || '';
   const secret = props.getProperty('OAUTH_CLIENT_SECRET') || '';
   const appUrl = Config.get('APP_URL');
-  const lines = [
-    (id ? '✔' : '✘') + ' OAUTH_CLIENT_ID ' + (id ? 'set (' + id.slice(0, 12) + '…)' : 'missing → Project Settings → Script Properties'),
-    (secret ? '✔' : '✘') + ' OAUTH_CLIENT_SECRET ' + (secret ? 'set' : 'missing → Project Settings → Script Properties'),
-    (/\/exec$/.test(appUrl) ? '✔' : '✘') + ' Settings APP_URL ' + (appUrl || 'empty') + (/\/exec$/.test(appUrl) ? '' : ' → paste the /exec Web app URL'),
-    'Google Cloud → Clients → Authorized redirect URI must be exactly: ' + (appUrl || '(APP_URL)'),
-    id && secret && /\/exec$/.test(appUrl) ? 'Sign-in is ON. Open the /exec URL to see "Sign in with Google".' : 'Sign-in is OFF until the ✘ items are fixed.',
-  ];
+  const urlOk = /\/exec$/.test(appUrl);
+  const urlLine = (urlOk ? '✔' : '✘') + ' APP_URL ' + (appUrl || 'empty') +
+    (urlOk ? '' : ' → paste the /exec Web app URL (Settings tab or Script Properties)');
+  let lines;
+  if (!id && !secret) {
+    lines = [
+      'Mode: Google built-in sign-in (no OAuth keys set).',
+      '• Deployment must be: Execute as = User accessing the web app; Who has access = Anyone with Google account.',
+      '• Share this Google Sheet as Editor with every person who uses the app.',
+      urlLine + (urlOk ? '' : ' (only needed for "Open request" links in emails)'),
+      'Sign-in is ON (Google asks each person to sign in and allow the app the first time).',
+    ];
+  } else {
+    lines = [
+      'Mode: OAuth "Sign in with Google" (keys found).',
+      (id ? '✔' : '✘') + ' OAUTH_CLIENT_ID ' + (id ? 'set (' + id.slice(0, 12) + '…)' : 'missing'),
+      (secret ? '✔' : '✘') + ' OAUTH_CLIENT_SECRET ' + (secret ? 'set' : 'missing'),
+      urlLine,
+      'Google Cloud → Clients → Authorized redirect URI must be exactly: ' + (appUrl || '(APP_URL)'),
+      id && secret && urlOk ? 'Sign-in is ON. Open the /exec URL to see "Sign in with Google".'
+        : 'Sign-in is OFF until the ✘ items are fixed (or delete both OAuth keys to use built-in sign-in).',
+    ];
+  }
   SetupUi.notify('Sign-in setup', lines.join('\n'));
   return lines;
 }
