@@ -4,7 +4,7 @@
  * Deep links from Slack/email: <APP_URL>?view=approvals&req=LR-2026-0012
  * Google sign-in returns here with ?code=…&state=…, which becomes a session.
  */
-const WEB_VIEWS = ['overview', 'apply', 'requests', 'approvals', 'admin'];
+const WEB_VIEWS = ['overview', 'apply', 'requests', 'approvals', 'reports', 'admin'];
 
 function doGet(e) {
   const page = HtmlService.createTemplateFromFile('ui/Index');

@@ -15,13 +15,16 @@
     { key: 'apply', label: 'Apply' },
     { key: 'requests', label: 'My requests' },
     { key: 'approvals', label: 'Approvals', approverOnly: true },
+    { key: 'reports', label: 'Reports' },
     { key: 'admin', label: 'Admin', adminOnly: true },
   ];
   const isApprover = (data) => data.me.role_level !== 'EMPLOYEE' || data.inbox.waiting.length > 0 || data.inbox.decided.length > 0;
 
   async function load() {
     try {
-      store.set({ data: await LD.api.bootstrap(), status: 'ready', error: '' });
+      const data = await LD.api.bootstrap();
+      LD.ui.setTypeOrder(data.leaveTypes);
+      store.set({ data: data, status: 'ready', error: '' });
     } catch (e) {
       store.set({ status: 'error', error: e.message });
     }

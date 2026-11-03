@@ -1,0 +1,90 @@
+<script>
+/**
+ * Charts — small, dependency-free charts drawn with HTML.
+ *   MonthlyChart(monthly, types)  stacked columns per month (one series per leave type),
+ *                                 legend, hover tooltip, and a hidden table for screen readers.
+ * Series colours follow the leave type's position (fixed order), never its rank.
+ */
+(function (LD) {
+  const { h, fmt } = LD.dom;
+  const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'];
+
+  function niceMax(v) {
+    if (v <= 4) return 4;
+    const step = v <= 10 ? 2 : v <= 25 ? 5 : v <= 50 ? 10 : 20;
+    return Math.ceil(v / step) * step;
+  }
+
+  let tip = null;
+  function tooltip() {
+    if (!tip) tip = document.body.appendChild(h('div', { class: 'chart-tip', role: 'status', hidden: true }));
+    return tip;
+  }
+  function showTip(ev, lines) {
+    const t = tooltip();
+    t.replaceChildren(...lines);
+    t.hidden = false;
+    const x = Math.min(ev.clientX + 14, window.innerWidth - t.offsetWidth - 8);
+    const y = Math.max(8, ev.clientY - t.offsetHeight - 12);
+    t.style.left = x + 'px';
+    t.style.top = y + 'px';
+  }
+  const hideTip = () => { if (tip) tip.hidden = true; };
+
+  /**
+   * @param {Array<{month, byType, total}>} monthly 12 rows
+   * @param {Array<{type_id, name, code}>} types   fixed order = colour order
+   */
+  function MonthlyChart(monthly, types, opts) {
+    const o = opts || {};
+    const max = niceMax(Math.max(0, ...monthly.map((m) => m.total)));
+    const ticks = [max, max / 2, 0];
+    const color = (i) => SERIES[i] || SERIES[SERIES.length - 1];
+    const total = monthly.reduce((t, m) => t + m.total, 0);
+
+    const legend = h('div', { class: 'chart-legend' }, types.map((t, i) =>
+      h('span', null, h('i', { style: { background: color(i) } }), t.name)));
+
+    const cols = monthly.map((m) => {
+      const segs = types.map((t, i) => ({ t, i, v: m.byType[t.type_id] || 0 })).filter((s) => s.v > 0);
+      const col = h('div', { class: 'chart-col', tabindex: m.total ? '0' : null,
+        'aria-label': m.month + ': ' + (m.total ? types.map((t) => t.code + ' ' + fmt.num(m.byType[t.type_id] || 0)).join(', ') : 'no leave') },
+        h('div', { class: 'chart-stack', style: { height: (m.total / max * 100) + '%' } },
+          segs.slice().reverse().map((s) => h('div', { class: 'chart-seg', style: { flexGrow: String(s.v), background: color(s.i) } }))),
+        h('span', { class: 'chart-x' }, m.month.slice(0, 1), h('span', { class: 'chart-x-rest' }, m.month.slice(1))));
+      const lines = () => [h('b', null, m.month + ' · ' + fmt.days(m.total))].concat(types.map((t, i) =>
+        h('div', null, h('i', { style: { background: color(i) } }), t.name + ': ' + fmt.num(m.byType[t.type_id] || 0))));
+      col.addEventListener('mousemove', (ev) => showTip(ev, lines()));
+      col.addEventListener('mouseleave', hideTip);
+      col.addEventListener('focus', () => { const r = col.getBoundingClientRect(); showTip({ clientX: r.left, clientY: r.top }, lines()); });
+      col.addEventListener('blur', hideTip);
+      return col;
+    });
+
+    const table = h('table', { class: 'sr-only' },
+      h('caption', null, (o.title || 'Leave days by month') + ', ' + fmt.days(total)),
+      h('tr', null, h('th', null, 'Month'), types.map((t) => h('th', null, t.name))),
+      monthly.map((m) => h('tr', null, h('td', null, m.month), types.map((t) => h('td', null, fmt.num(m.byType[t.type_id] || 0))))));
+
+    return h('figure', { class: 'chart' },
+      h('div', { class: 'chart-head' }, h('figcaption', null, o.title || 'Leave days by month'), legend),
+      h('div', { class: 'chart-body', 'aria-hidden': 'true' },
+        h('div', { class: 'chart-y' }, ticks.map((v) => h('span', null, fmt.num(v)))),
+        h('div', { class: 'chart-plot' },
+          h('div', { class: 'chart-grid' }, ticks.map(() => h('i'))),
+          h('div', { class: 'chart-cols' }, cols))),
+      total ? null : h('p', { class: 'muted small' }, 'No approved leave yet this year.'),
+      table);
+  }
+
+  /** Horizontal meter: used vs credited, e.g. utilisation. */
+  function Meter(used, credited, label) {
+    const pct = credited ? Math.min(100, Math.round((used / credited) * 100)) : 0;
+    return h('div', { class: 'meter-row' },
+      h('div', { class: 'row spread small' }, h('span', null, label), h('span', { class: 'muted' }, fmt.num(used) + ' of ' + fmt.num(credited) + ' used · ' + pct + '%')),
+      h('div', { class: 'meter', role: 'img', 'aria-label': label + ' ' + pct + '% used' }, h('span', { style: { width: pct + '%', background: 'var(--accent)' } })));
+  }
+
+  LD.charts = { MonthlyChart, Meter };
+})(window.LD);
+</script>

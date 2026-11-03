@@ -27,6 +27,7 @@ function apiBootstrap(session, returnTo) {
     const year = DateUtil.year(DateUtil.today());
     return Object.assign(base, {
       isAdmin: who.isAdmin,
+      reportScopes: ReportService.scopesFor(who.employee, who.isAdmin),
       people: who.isAdmin && who.testMode ? Directory.activeEmployees().map(Directory.profile) : [],
       leaveTypes: Catalog.leaveTypes().map((t) => ({ type_id: t.type_id, name: t.name, code: t.code, color: t.color, half_day_allowed: t.half_day_allowed })),
       halfDayAllowed: Config.bool('HALF_DAY_ALLOWED'),
@@ -63,12 +64,41 @@ function apiPick(_noSession, persona) {
   return respond_(() => Auth.pick(persona));
 }
 
-/** Admin dashboard: org-wide numbers, requests and balances. Admins only. */
-function apiAdminOverview(session) {
+/** Reports: own, team (leads / C-suite) and organization (admin). scope: person | team | org */
+function apiReport(session, scope, id) {
   return respond_(() => {
-    if (!Identity.current(session).isAdmin) throw Errors.forbidden('Only admins can open the admin dashboard.');
-    return AdminService.overview();
+    const who = Identity.current(session);
+    const me = Identity.requireEmployee(session);
+    return ReportService.get(me, who.isAdmin, scope || 'person', id || '');
   });
+}
+
+/** Admin endpoints. Every one checks the caller is an admin first. */
+function requireAdmin_(session) {
+  const who = Identity.current(session);
+  if (!who.email && Auth.isEnabled()) throw Errors.unauthenticated();
+  if (!who.isAdmin) throw Errors.forbidden('Only admins can do this.');
+  return who;
+}
+
+function apiAdminOverview(session) {
+  return respond_(() => { requireAdmin_(session); return AdminService.overview(); });
+}
+
+function apiAdminSavePerson(session, input) {
+  return respond_(() => Db.transaction(() => AdminService.savePerson(requireAdmin_(session), input)));
+}
+
+function apiAdminSaveTeam(session, input) {
+  return respond_(() => Db.transaction(() => AdminService.saveTeam(requireAdmin_(session), input)));
+}
+
+function apiAdminAdjustBalance(session, empId, typeId, days, reason) {
+  return respond_(() => Db.transaction(() => AdminService.adjustBalance(requireAdmin_(session), empId, typeId, days, reason)));
+}
+
+function apiAdminSaveQuota(session, ruleId, yearlyQuota) {
+  return respond_(() => Db.transaction(() => AdminService.saveQuota(requireAdmin_(session), ruleId, yearlyQuota)));
 }
 
 function apiSignOut(session) {

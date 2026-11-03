@@ -38,6 +38,11 @@
     signOut:   () => call('apiSignOut').finally(() => setSession('')),
     pick:      (persona) => call('apiPick', persona).then((res) => { setSession(res.session); return res; }),
     adminOverview: () => call('apiAdminOverview'),
+    report:        (scope, id) => call('apiReport', scope, id),
+    adminSavePerson:    (input) => call('apiAdminSavePerson', input),
+    adminSaveTeam:      (input) => call('apiAdminSaveTeam', input),
+    adminAdjustBalance: (empId, typeId, days, reason) => call('apiAdminAdjustBalance', empId, typeId, days, reason),
+    adminSaveQuota:     (ruleId, quota) => call('apiAdminSaveQuota', ruleId, quota),
   };
 })(window.LD);
 </script>

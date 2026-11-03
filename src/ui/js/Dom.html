@@ -49,6 +49,7 @@
     },
     role: (r) => ({ TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', SYSTEM: 'Auto', LEAD: 'Team Lead', EMPLOYEE: 'Employee' }[r] || r),
     type: (t) => ({ FT: 'Full-time', INT: 'Intern', CON: 'Contractor' }[t] || t),
+    title: (s) => String(s || '').toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase()),
   };
 
   let toastBox = null;

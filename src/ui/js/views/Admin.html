@@ -1,79 +1,291 @@
 <script>
 /**
- * Admin — org-wide dashboard: key numbers, who is on leave today, every request
- * (filter by status), and every person's balance. Read-only.
+ * Admin — full control, organised like Jibble's admin area:
+ *   Dashboard  organization report + teams (click a team or person to drill down)
+ *   People     directory with search/filters; add or edit a person; adjust their balance
+ *   Teams      every team with its lead, C-suite approver and members; add or edit a team
+ *   Requests   every leave request, filtered by status
+ *   Policies   yearly quota per employee type and leave type
+ * Every change goes through the server and is recorded in AuditLog.
  */
 (function (LD) {
-  const { h, fmt } = LD.dom;
-  const { RequestCard, EmptyState, Notice, SectionTitle } = LD.ui;
-  const state = { data: null, loading: false, error: '', tab: 'requests', status: 'PENDING' };
+  const { h, fmt, toast } = LD.dom;
+  const { RequestCard, EmptyState, Notice, SectionTitle, ActionButton } = LD.ui;
+  const R = () => LD.reports;
 
-  async function fetchData(actions) {
+  const TABS = [['dashboard', 'Dashboard'], ['people', 'People'], ['teams', 'Teams'], ['requests', 'Requests'], ['policies', 'Policies']];
+  const state = { data: null, loading: false, error: '', tab: 'dashboard', drill: null, status: 'PENDING', q: '', team: '', role: '', showInactive: false };
+  let actionsRef = null;
+
+  async function refresh() {
     state.loading = true; state.error = '';
     try { state.data = await LD.api.adminOverview(); } catch (e) { state.error = e.message; }
     state.loading = false;
-    actions.rerender();
+    if (actionsRef) actionsRef.rerender();
   }
 
-  const tile = (value, label, tone) => h('div', { class: 'tile ' + (tone || '') }, h('b', null, fmt.num(value)), h('span', null, label));
-
-  function segmented(options, current, onPick, label) {
-    return h('div', { class: 'segmented', role: 'group', 'aria-label': label },
-      options.map(([key, text]) => h('button', { type: 'button', 'aria-pressed': String(current === key), onClick: () => onPick(key) }, text)));
+  async function drill(scope, id) {
+    state.drill = { scope, id, data: null, error: '' };
+    actionsRef.rerender();
+    try { state.drill.data = await LD.api.report(scope, id); } catch (e) { state.drill.error = e.message; }
+    actionsRef.rerender();
+    window.scrollTo(0, 0);
   }
 
-  function requestsPanel(d, actions) {
+  const segmented = (options, current, onPick, label) => h('div', { class: 'segmented', role: 'group', 'aria-label': label },
+    options.map(([key, text]) => h('button', { type: 'button', 'aria-pressed': String(current === key), onClick: () => onPick(key) }, text)));
+
+  // ------------------------------------------------------------------ side panel (add / edit)
+
+  function openPanel(title, content) {
+    closePanel();
+    const panel = h('div', { class: 'panel-backdrop', id: 'admin-panel' },
+      h('aside', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+        h('div', { class: 'row spread' }, h('h2', null, title), h('button', { class: 'btn small', type: 'button', onClick: closePanel }, 'Close')),
+        content));
+    panel.addEventListener('click', (ev) => { if (ev.target === panel) closePanel(); });
+    document.addEventListener('keydown', escClose);
+    document.body.appendChild(panel);
+    const first = panel.querySelector('input, select');
+    if (first) first.focus();
+  }
+  function escClose(ev) { if (ev.key === 'Escape') closePanel(); }
+  function closePanel() {
+    const p = document.getElementById('admin-panel');
+    if (p) p.remove();
+    document.removeEventListener('keydown', escClose);
+  }
+
+  const field = (label, control, full) => h('label', { class: 'field' + (full ? ' full' : ''), for: control.id }, h('span', null, label), control);
+  const input = (id, value, type, extra) => h('input', Object.assign({ class: 'input', id, type: type || 'text', value: value == null ? '' : String(value) }, extra || {}));
+  const select = (id, options, value) => h('select', { class: 'input', id },
+    options.map(([v, label]) => h('option', { value: v, selected: String(v) === String(value || '') }, label)));
+
+  // ------------------------------------------------------------------ person form
+
+  function personForm(p) {
+    const d = state.data;
+    const isNew = !p;
+    const v = p || { role_level: 'EMPLOYEE', emp_type: 'FT', status: 'Active', join_date: new Date().toISOString().slice(0, 10) };
+    const f = {
+      name: input('p-name', v.name, 'text', { required: true }), email: input('p-email', v.email, 'email', { required: true }),
+      role: select('p-role', [['EMPLOYEE', 'Employee'], ['LEAD', 'Team Lead'], ['CSUITE', 'C-suite']], v.role_level),
+      type: select('p-type', [['FT', 'Full-time'], ['INT', 'Intern'], ['CON', 'Contractor']], v.emp_type),
+      team: select('p-team', [['', 'Choose a team…']].concat(d.teams.filter((t) => t.active).map((t) => [t.team_id, t.team_name])), v.team_id),
+      join: input('p-join', v.join_date, 'date'), end: input('p-end', v.end_date, 'date'),
+      status: select('p-status', [['Active', 'Active'], ['Inactive', 'Inactive (left)']], v.status),
+    };
+    const hint = h('p', { class: 'small muted' });
+    const updateHint = () => {
+      const team = d.teams.find((t) => t.team_id === f.team.value);
+      const role = f.role.value;
+      hint.textContent = !team ? 'Leave requests are routed by team.'
+        : role === 'EMPLOYEE' ? 'Leave goes to ' + (team.lead || 'the team lead (none yet)') + ' and ' + (team.csuite || 'the C-suite approver (none yet)') + ' together.'
+        : role === 'LEAD' ? 'Leave goes to ' + (team.csuite || 'the C-suite approver (none yet)') + '.' + (team.lead_id && team.lead_id !== (p && p.emp_id) ? ' ' + team.team_name + ' already has a lead (' + team.lead + '); assign leads in Teams.' : '')
+        : 'C-suite leave is approved automatically.';
+      f.end.required = f.type.value !== 'FT';
+    };
+    [f.team, f.role, f.type].forEach((el) => el.addEventListener('change', updateHint));
+    updateHint();
+    const error = h('div', { 'aria-live': 'polite' });
+
+    const save = ActionButton(isNew ? 'Add person' : 'Save changes', 'primary', async () => {
+      error.replaceChildren();
+      try {
+        const res = await LD.api.adminSavePerson({
+          emp_id: p ? p.emp_id : '', name: f.name.value, email: f.email.value, role_level: f.role.value, emp_type: f.type.value,
+          team_id: f.team.value, join_date: f.join.value, end_date: f.end.value, status: f.status.value,
+        });
+        toast(res.created ? res.person.name + ' added' + (res.balances.length ? ' with leave credited.' : '.') : 'Saved.');
+        closePanel();
+        await refresh();
+      } catch (e) { error.replaceChildren(Notice('bad', null, e.message)); }
+    });
+
+    const parts = [
+      h('div', { class: 'form-grid' },
+        field('Full name', f.name, true), field('Work email', f.email, true),
+        field('Role', f.role), field('Employment type', f.type),
+        field('Team', f.team, true),
+        field('Joining date', f.join), field('Contract end (interns, contractors)', f.end),
+        field('Status', f.status)),
+      hint, error, h('div', { class: 'row' }, save, h('button', { class: 'btn', type: 'button', onClick: closePanel }, 'Cancel')),
+    ];
+    if (p) parts.push(balanceSection(p), h('div', { class: 'row' },
+      h('button', { class: 'btn link', type: 'button', onClick: () => { closePanel(); state.tab = 'people'; drill('person', p.emp_id); } }, 'Open ' + p.name + '\'s report →')));
+    return h('div', { class: 'stack' }, parts);
+  }
+
+  function balanceSection(p) {
+    const types = state.data.leaveTypes;
+    const list = h('div', { class: 'trail' }, p.balances.map((b) => h('div', { class: 'row spread' },
+      h('span', null, b.name), h('span', { class: 'muted' }, fmt.num(b.available) + ' left of ' + fmt.num(b.accrued + b.adjusted) + (b.adjusted ? ' (' + (b.adjusted > 0 ? '+' : '') + fmt.num(b.adjusted) + ' adjusted)' : '')))));
+    const type = select('a-type', types.map((t) => [t.type_id, t.name]), types[0] && types[0].type_id);
+    const days = input('a-days', '', 'number', { step: '0.5', placeholder: 'e.g. 1 or -2' });
+    const reason = input('a-reason', '', 'text', { placeholder: 'Why? e.g. Comp-off for weekend work', maxlength: '200' });
+    const error = h('div', { 'aria-live': 'polite' });
+    const apply = ActionButton('Apply adjustment', '', async () => {
+      error.replaceChildren();
+      try {
+        const balances = await LD.api.adminAdjustBalance(p.emp_id, type.value, Number(days.value), reason.value);
+        p.balances = balances;
+        toast('Balance updated.');
+        list.replaceWith(balanceSection(p).querySelector('.trail'));
+        days.value = ''; reason.value = '';
+        refresh();
+      } catch (e) { error.replaceChildren(Notice('bad', null, e.message)); }
+    });
+    return h('section', { class: 'stack panel-section' },
+      h('h3', null, 'Leave balance · ' + new Date().getFullYear()), list,
+      h('div', { class: 'form-grid' }, field('Leave type', type), field('Days (+ add, − remove)', days), field('Reason (saved in the audit log)', reason, true)),
+      error, h('div', { class: 'row' }, apply));
+  }
+
+  // ------------------------------------------------------------------ team form
+
+  function teamForm(t) {
+    const d = state.data;
+    const active = d.people.filter((p) => p.status === 'Active');
+    const f = {
+      name: input('t-name', t ? t.team_name : '', 'text', { required: true }),
+      lead: select('t-lead', [['', 'No team lead']].concat(active.filter((p) => p.role_level !== 'CSUITE').map((p) => [p.emp_id, p.name + ' · ' + (p.team_name || 'no team')])), t && t.lead_id),
+      csuite: select('t-csuite', [['', 'No approver']].concat(active.filter((p) => p.role_level === 'CSUITE').map((p) => [p.emp_id, p.name])), t && t.csuite_id),
+      active: h('input', { type: 'checkbox', id: 't-active', checked: t ? t.active : true }),
+    };
+    const error = h('div', { 'aria-live': 'polite' });
+    const save = ActionButton(t ? 'Save team' : 'Add team', 'primary', async () => {
+      error.replaceChildren();
+      try {
+        const saved = await LD.api.adminSaveTeam({ team_id: t ? t.team_id : '', team_name: f.name.value, lead_id: f.lead.value, csuite_id: f.csuite.value, active: f.active.checked });
+        toast((t ? 'Saved ' : 'Added ') + saved.team_name + '.');
+        closePanel();
+        await refresh();
+      } catch (e) { error.replaceChildren(Notice('bad', null, e.message)); }
+    });
+    return h('div', { class: 'stack' },
+      h('div', { class: 'form-grid' },
+        field('Team name', f.name, true), field('Team lead', f.lead, true), field('C-suite approver', f.csuite, true),
+        h('label', { class: 'check full', for: 't-active' }, f.active, 'Active')),
+      h('p', { class: 'small muted' }, 'The team lead moves into this team with the Team Lead role. Members\' leave goes to the lead and the C-suite approver together; the lead\'s own leave goes to the approver.'),
+      t && t.members.length ? h('div', { class: 'stack panel-section' }, h('h3', null, 'Members (' + t.members.length + ')'),
+        h('div', { class: 'chips' }, t.members.map((m) => LD.ui.Chip(m.name + ' · ' + fmt.role(m.role_level), 'neutral')))) : null,
+      error, h('div', { class: 'row' }, save, h('button', { class: 'btn', type: 'button', onClick: closePanel }, 'Cancel')));
+  }
+
+  // ------------------------------------------------------------------ tabs
+
+  function dashboardTab() {
+    return R().renderGroup(state.data.report, (id) => drill('person', id), (id) => drill('team', id));
+  }
+
+  function peopleTab() {
+    const d = state.data;
+    const q = h('input', { class: 'input', id: 'f-q', type: 'search', placeholder: 'Search name or email', value: state.q });
+    const team = select('f-team', [['', 'All teams']].concat(d.teams.map((t) => [t.team_id, t.team_name])), state.team);
+    const role = select('f-role', [['', 'All roles'], ['EMPLOYEE', 'Employees'], ['LEAD', 'Team leads'], ['CSUITE', 'C-suite']], state.role);
+    const inactive = h('input', { type: 'checkbox', id: 'f-inactive', checked: state.showInactive });
+    const tableBox = h('div');
+    const draw = () => {
+      const needle = state.q.toLowerCase();
+      const rows = d.people.filter((p) => (state.showInactive || p.status === 'Active') && (!state.team || p.team_id === state.team) &&
+        (!state.role || p.role_level === state.role) && (!needle || (p.name + ' ' + p.email).toLowerCase().indexOf(needle) !== -1));
+      tableBox.replaceChildren(rows.length
+        ? R().membersTable(rows, d.leaveTypes, (id) => drill('person', id), { showTeam: true,
+            actions: (p) => h('button', { class: 'btn small', type: 'button', onClick: () => openPanel('Edit ' + p.name, personForm(p)) }, 'Edit') })
+        : h('div', { class: 'card' }, EmptyState('No one matches', 'Change the search or filters.')));
+    };
+    q.addEventListener('input', () => { state.q = q.value; draw(); });
+    team.addEventListener('change', () => { state.team = team.value; draw(); });
+    role.addEventListener('change', () => { state.role = role.value; draw(); });
+    inactive.addEventListener('change', () => { state.showInactive = inactive.checked; draw(); });
+    draw();
+    return h('div', { class: 'stack' },
+      h('div', { class: 'filters' }, q, team, role, h('label', { class: 'check', for: 'f-inactive' }, inactive, 'Show people who left'),
+        h('button', { class: 'btn primary', type: 'button', onClick: () => openPanel('Add a person', personForm(null)) }, '+ Add person')),
+      tableBox);
+  }
+
+  function teamsTab() {
+    const d = state.data;
+    const report = d.report.teams;
+    return h('div', { class: 'stack' },
+      h('div', { class: 'row spread' }, h('p', { class: 'muted' }, d.teams.length + ' teams. Each team\'s lead and C-suite approver decide who approves leave.'),
+        h('button', { class: 'btn primary', type: 'button', onClick: () => openPanel('Add a team', teamForm(null)) }, '+ Add team')),
+      h('div', { class: 'grid' }, d.teams.map((t) => {
+        const r = report.find((x) => x.team_id === t.team_id) || { daysTaken: 0, utilization: 0, pending: 0 };
+        return h('article', { class: 'card' },
+          h('div', { class: 'row spread' }, h('h3', null, t.team_name), t.active ? null : LD.ui.Chip('Inactive', 'neutral')),
+          h('div', { class: 'facts' }, h('div', { class: 'fact' }, h('span', null, 'Team lead'), h('b', null, t.lead || '—')),
+            h('div', { class: 'fact' }, h('span', null, 'C-suite approver'), h('b', null, t.csuite || '—')),
+            h('div', { class: 'fact' }, h('span', null, 'Members'), h('b', null, String(t.members.length))),
+            h('div', { class: 'fact' }, h('span', null, 'Quota used'), h('b', null, r.utilization + '%'))),
+          t.members.length ? h('div', { class: 'chips' }, t.members.slice(0, 8).map((m) => LD.ui.Chip(m.name, m.role_level === 'LEAD' ? 'good' : 'neutral')),
+            t.members.length > 8 ? LD.ui.Chip('+' + (t.members.length - 8) + ' more', 'neutral') : null) : h('p', { class: 'muted small' }, 'No members yet.'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn small', type: 'button', onClick: () => openPanel('Edit ' + t.team_name, teamForm(t)) }, 'Edit team'),
+            h('button', { class: 'btn small', type: 'button', onClick: () => drill('team', t.team_id) }, 'Team report')));
+      })));
+  }
+
+  function requestsTab() {
+    const list = state.data.requests;
     const counts = {};
-    d.requests.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
-    const list = d.requests.filter((r) => state.status === 'ALL' || r.status === state.status);
+    list.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+    const shown = list.filter((r) => state.status === 'ALL' || r.status === state.status);
     return h('div', { class: 'stack' },
       segmented([['PENDING', 'Pending (' + (counts.PENDING || 0) + ')'], ['APPROVED', 'Approved'], ['REJECTED', 'Rejected'], ['CANCELLED', 'Cancelled'], ['ALL', 'All']],
-        state.status, (k) => { state.status = k; actions.rerender(); }, 'Filter requests'),
-      list.length ? list.map((r) => RequestCard(r, { showEmployee: true })) : h('div', { class: 'card' }, EmptyState('No requests here', null)));
+        state.status, (k) => { state.status = k; actionsRef.rerender(); }, 'Filter requests'),
+      shown.length ? shown.map((r) => RequestCard(r, { showEmployee: true })) : h('div', { class: 'card' }, EmptyState('No requests here', null)));
   }
 
-  function balancesPanel(d) {
-    const types = d.leaveTypes;
-    return h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
-      h('thead', null, h('tr', null,
-        h('th', null, 'Name'), h('th', null, 'Team'), h('th', null, 'Role'), h('th', null, 'Type'),
-        types.map((t) => h('th', { class: 'num' }, t.code + ' left / credited')),
-        h('th', { class: 'num' }, 'Pending'), h('th', { class: 'num' }, 'LOP days'))),
-      h('tbody', null, d.balances.map((p) => {
-        const by = {};
-        p.balances.forEach((b) => { by[b.type_id] = b; });
-        const pending = p.balances.reduce((t, b) => t + b.pending, 0);
-        return h('tr', null,
-          h('td', null, h('b', null, p.name)), h('td', null, p.team_name), h('td', null, fmt.role(p.role_level === 'CSUITE' ? 'CSUITE' : p.role_level)),
-          h('td', null, fmt.type(p.emp_type)),
-          types.map((t) => { const b = by[t.type_id] || { available: 0, credited: 0 }; return h('td', { class: 'num' }, fmt.num(b.available) + ' / ' + fmt.num(b.credited)); }),
-          h('td', { class: 'num' }, fmt.num(pending)), h('td', { class: 'num' }, fmt.num(p.lop_days)));
-      }))));
+  function policiesTab() {
+    const rows = state.data.policies;
+    return h('div', { class: 'stack' },
+      h('p', { class: 'muted' }, 'Yearly quota per employee type. Interns and contractors get the same quota prorated by contract months. A change applies to new credits; adjust existing balances from People → Edit.'),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+        h('thead', null, h('tr', null, h('th', null, 'Policy'), h('th', null, 'Leave type'), h('th', null, 'Credited'), h('th', { class: 'num' }, 'Days per year'), h('th', null, ''))),
+        h('tbody', null, rows.map((r) => {
+          const q = input('q-' + r.rule_id, r.yearly_quota, 'number', { min: '0', max: '366', step: '0.5', style: { width: '90px', textAlign: 'right' }, 'aria-label': r.policy_name + ' ' + r.type_name + ' days per year' });
+          const save = ActionButton('Save', 'small', async () => {
+            await LD.api.adminSaveQuota(r.rule_id, q.value);
+            toast(r.policy_name + ' · ' + r.type_name + ': ' + q.value + ' days a year.');
+            refresh();
+          });
+          return h('tr', null, h('td', null, h('b', null, r.policy_name)), h('td', null, r.type_name), h('td', null, fmt.title(r.accrual)),
+            h('td', { class: 'num' }, q), h('td', null, save));
+        })))));
   }
+
+  // ------------------------------------------------------------------ page
 
   LD.views.admin = {
     title: 'Admin',
-    reset() { state.data = null; state.error = ''; },
+    reset() { state.data = null; state.error = ''; state.drill = null; },
     render(data, actions) {
-      if (!state.data && !state.loading && !state.error) fetchData(actions);
+      actionsRef = actions;
+      if (!state.data && !state.loading && !state.error) refresh();
       const head = h('div', { class: 'page-head' },
-        h('div', null, h('h1', null, 'Admin dashboard'), h('p', { class: 'muted' }, 'Everyone\'s leave at a glance' + (state.data ? ' · ' + state.data.year : ''))),
-        h('button', { class: 'btn', type: 'button', disabled: state.loading, onClick: () => fetchData(actions) }, state.loading ? 'Loading…' : 'Refresh'));
-      if (state.error) return h('div', { class: 'stack' }, head, Notice('bad', 'Could not load the dashboard', state.error));
+        h('div', null, h('h1', null, 'Admin'), h('p', { class: 'muted' }, 'People, teams, leave and reports' + (state.data ? ' · ' + state.data.report.year : ''))),
+        h('button', { class: 'btn', type: 'button', disabled: state.loading, onClick: refresh }, state.loading ? 'Loading…' : 'Refresh'));
+      if (state.error) return h('div', { class: 'stack' }, head, Notice('bad', 'Could not load the admin area', state.error));
       if (!state.data) return h('div', { class: 'stack' }, head, h('div', { class: 'card' }, EmptyState('Loading…', null)));
 
-      const d = state.data, s = d.stats;
-      return h('div', { class: 'stack', style: { gap: '20px' } }, head,
-        h('div', { class: 'tiles' },
-          tile(s.people, 'People'), tile(s.pending, 'Waiting for approval', s.pending ? 'warn' : ''),
-          tile(s.approved, 'Approved this year', 'good'), tile(s.rejected, 'Rejected', s.rejected ? 'bad' : ''),
-          tile(s.daysTaken, 'Days taken'), tile(s.lopDays, 'Loss of Pay days', s.lopDays ? 'warn' : ''), tile(s.onLeaveToday, 'On leave today')),
-        h('section', { class: 'card' }, SectionTitle('On leave today'),
-          d.onLeaveToday.length
-            ? h('div', { class: 'trail' }, d.onLeaveToday.map((x) => h('div', { class: 'row spread' }, h('b', null, x.name), h('span', { class: 'muted' }, x.type + ' · until ' + fmt.date(x.until)))))
-            : h('p', { class: 'muted' }, 'Nobody is on leave today.')),
-        segmented([['requests', 'Requests'], ['balances', 'Balances']], state.tab, (k) => { state.tab = k; actions.rerender(); }, 'Admin sections'),
-        state.tab === 'requests' ? requestsPanel(d, actions) : balancesPanel(d));
+      const tabs = segmented(TABS, state.drill ? '' : state.tab, (k) => { state.tab = k; state.drill = null; actions.rerender(); }, 'Admin sections');
+      let body;
+      if (state.drill) {
+        const dr = state.drill;
+        const back = h('button', { class: 'btn small', type: 'button', onClick: () => { state.drill = null; actions.rerender(); } }, '← Back to ' + TABS.find((t) => t[0] === state.tab)[1]);
+        const person = dr.data && dr.scope === 'person' ? state.data.people.find((p) => p.emp_id === dr.id) : null;
+        body = h('div', { class: 'stack' },
+          h('div', { class: 'row spread' }, back, person ? h('button', { class: 'btn small', type: 'button', onClick: () => openPanel('Edit ' + person.name, personForm(person)) }, 'Edit ' + person.name) : null),
+          dr.error ? Notice('bad', 'Could not load the report', dr.error)
+            : !dr.data ? h('div', { class: 'card' }, EmptyState('Loading…', null))
+            : h('div', { class: 'stack' }, h('h2', null, dr.data.title),
+              dr.scope === 'person' ? R().renderPerson(dr.data) : R().renderGroup(dr.data, (id) => drill('person', id), (id) => drill('team', id))));
+      } else {
+        body = { dashboard: dashboardTab, people: peopleTab, teams: teamsTab, requests: requestsTab, policies: policiesTab }[state.tab]();
+      }
+      return h('div', { class: 'stack', style: { gap: '18px' } }, head, tabs, body);
     },
   };
 })(window.LD);

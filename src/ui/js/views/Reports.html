@@ -1,0 +1,162 @@
+<script>
+/**
+ * Reports — leave statistics for me, my team(s), or the organization.
+ * The same renderers are reused by the Admin dashboard (LD.reports.*).
+ */
+(function (LD) {
+  const { h, fmt } = LD.dom;
+  const { BalanceCard, RequestCard, EmptyState, Notice, SectionTitle } = LD.ui;
+  const { MonthlyChart, Meter } = LD.charts;
+
+  const tile = (value, label, tone) => h('div', { class: 'tile ' + (tone || '') }, h('b', null, typeof value === 'number' ? fmt.num(value) : value), h('span', null, label));
+  const pct = (v) => v + '%';
+
+  function personHeader(p) {
+    return h('div', { class: 'card' },
+      h('div', { class: 'row spread' },
+        h('div', null, h('h2', null, p.name), h('p', { class: 'muted' }, fmt.role(p.role_level) + ' · ' + fmt.type(p.emp_type) + ' · ' + (p.team_name || 'No team'))),
+        p.status && p.status !== 'Active' ? LD.ui.Chip(p.status, 'neutral') : null),
+      h('div', { class: 'facts' },
+        fact('Email', p.email), fact('Leave approved by', p.approvers || '—'), fact('Team lead', p.lead || '—'), fact('C-suite approver', p.csuite || '—'),
+        fact('Reports to', p.manager || '—'), fact('Joined', fmt.date(p.join_date)), p.end_date ? fact('Contract ends', fmt.date(p.end_date)) : null));
+  }
+  const fact = (label, value) => h('div', { class: 'fact' }, h('span', null, label), h('b', null, value));
+
+  /** Person report: profile, balances, stats, monthly chart, upcoming and recent leave. */
+  function renderPerson(r, onOpenPerson) {
+    const p = r.person;
+    return h('div', { class: 'stack', style: { gap: '18px' } },
+      personHeader(p),
+      h('div', { class: 'grid' }, p.balances.map(BalanceCard)),
+      h('div', { class: 'tiles' },
+        tile(p.days_taken, 'Days taken in ' + r.year), tile(r.counts.PENDING, 'Pending', r.counts.PENDING ? 'warn' : ''),
+        tile(r.counts.APPROVED, 'Approved', 'good'), tile(r.counts.REJECTED, 'Rejected', r.counts.REJECTED ? 'bad' : ''),
+        tile(p.lop_days, 'Loss of Pay days', p.lop_days ? 'warn' : '')),
+      h('div', { class: 'card' }, MonthlyChart(r.monthly, r.types, { title: 'Leave taken by month · ' + r.year })),
+      h('div', { class: 'two-col' },
+        h('section', { class: 'stack' }, SectionTitle('Recent requests'),
+          r.recent.length ? r.recent.map((x) => RequestCard(x)) : h('div', { class: 'card' }, EmptyState('No requests yet', null))),
+        h('section', { class: 'stack' }, SectionTitle('Upcoming leave'), upcomingList(r.upcoming, false))));
+  }
+
+  function upcomingList(list, withName) {
+    return h('div', { class: 'card' }, list.length
+      ? h('div', { class: 'trail' }, list.map((u) => h('div', { class: 'row spread' },
+          h('span', null, withName ? h('b', null, u.name + ' ') : null, u.type),
+          h('span', { class: 'muted' }, fmt.range(u.start_date, u.end_date) + ' · ' + fmt.days(u.days, u.half_day)))))
+      : h('p', { class: 'muted' }, 'Nothing booked.'));
+  }
+
+  /** Members table: who, team, approvers, balances. Click a row to open their report. */
+  function membersTable(rows, types, onOpenPerson, opts) {
+    const o = opts || {};
+    return h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null,
+        h('th', null, 'Name'), o.showTeam ? h('th', null, 'Team') : null, h('th', null, 'Role'), h('th', null, 'Type'),
+        h('th', null, 'Leave approved by'),
+        types.map((t) => h('th', { class: 'num' }, t.code + ' left / credited')),
+        h('th', { class: 'num' }, 'Taken'), h('th', { class: 'num' }, 'Pending'), h('th', { class: 'num' }, 'LOP'),
+        o.actions ? h('th', null, '') : null)),
+      h('tbody', null, rows.map((p) => {
+        const by = {};
+        p.balances.forEach((b) => { by[b.type_id] = b; });
+        const tr = h('tr', { class: onOpenPerson ? 'clickable' : '', tabindex: onOpenPerson ? '0' : null },
+          h('td', null, h('b', null, p.name), h('div', { class: 'muted small' }, p.email || '')),
+          o.showTeam ? h('td', null, p.team_name || '—') : null,
+          h('td', null, fmt.role(p.role_level)), h('td', null, fmt.type(p.emp_type) + (p.status && p.status !== 'Active' ? ' · ' + p.status : '')),
+          h('td', null, p.approvers || '—'),
+          types.map((t) => { const b = by[t.type_id] || { available: 0, accrued: 0, adjusted: 0 }; return h('td', { class: 'num' }, fmt.num(b.available) + ' / ' + fmt.num(b.accrued + b.adjusted)); }),
+          h('td', { class: 'num' }, fmt.num(p.days_taken)), h('td', { class: 'num' }, fmt.num(p.pending)), h('td', { class: 'num' }, fmt.num(p.lop_days)),
+          o.actions ? h('td', null, o.actions(p)) : null);
+        if (onOpenPerson) {
+          tr.addEventListener('click', (ev) => { if (!ev.target.closest('button')) onOpenPerson(p.emp_id); });
+          tr.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') onOpenPerson(p.emp_id); });
+        }
+        return tr;
+      }))));
+  }
+
+  /** Team or organization report. */
+  function renderGroup(r, onOpenPerson, onOpenTeam) {
+    const s = r.stats;
+    const all = r.byType.reduce((a, b) => ({ credited: a.credited + b.credited, used: a.used + b.used }), { credited: 0, used: 0 });
+    return h('div', { class: 'stack', style: { gap: '18px' } },
+      r.team ? h('div', { class: 'card' }, h('div', { class: 'facts' },
+        fact('Team lead', r.team.lead || '—'), fact('C-suite approver', r.team.csuite || '—'), fact('Members', String(s.members)))) : null,
+      h('div', { class: 'tiles' },
+        tile(s.members, 'People'), tile(s.daysTaken, 'Days taken in ' + r.year),
+        tile(pct(all.credited ? Math.round(all.used / all.credited * 100) : 0), 'Of credited leave used'),
+        tile(r.counts.PENDING, 'Waiting for approval', r.counts.PENDING ? 'warn' : ''),
+        tile(s.lopDays, 'Loss of Pay days', s.lopDays ? 'warn' : ''), tile(s.onLeaveToday, 'On leave today')),
+      h('div', { class: 'two-col' },
+        h('div', { class: 'card' }, MonthlyChart(r.monthly, r.types, { title: 'Leave taken by month · ' + r.year })),
+        h('div', { class: 'card stack' }, h('h3', null, 'Quota used by leave type'),
+          r.byType.map((t) => Meter(t.used, t.credited, t.name)),
+          h('h3', null, 'On leave today'),
+          r.onLeaveToday.length ? h('div', { class: 'trail' }, r.onLeaveToday.map((x) => h('div', { class: 'row spread' }, h('b', null, x.name), h('span', { class: 'muted' }, x.type + ' · until ' + fmt.date(x.until)))))
+            : h('p', { class: 'muted' }, 'Nobody.'))),
+      r.teams ? h('section', { class: 'stack' }, SectionTitle('Teams'), teamTable(r.teams, onOpenTeam)) : null,
+      h('section', { class: 'stack' }, SectionTitle('Upcoming leave'), upcomingList(r.upcoming, true)),
+      h('section', { class: 'stack' }, SectionTitle(r.scope === 'org' ? 'Everyone' : 'Members'),
+        membersTable(r.members, r.types, onOpenPerson, { showTeam: r.scope === 'org' })));
+  }
+
+  function teamTable(teams, onOpenTeam) {
+    return h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Team'), h('th', null, 'Team lead'), h('th', null, 'C-suite approver'),
+        h('th', { class: 'num' }, 'People'), h('th', { class: 'num' }, 'Days taken'), h('th', { class: 'num' }, 'Quota used'),
+        h('th', { class: 'num' }, 'Pending'), h('th', { class: 'num' }, 'On leave today'))),
+      h('tbody', null, teams.map((t) => {
+        const tr = h('tr', { class: onOpenTeam ? 'clickable' : '', tabindex: onOpenTeam ? '0' : null },
+          h('td', null, h('b', null, t.team_name)), h('td', null, t.lead || '—'), h('td', null, t.csuite || '—'),
+          h('td', { class: 'num' }, fmt.num(t.members)), h('td', { class: 'num' }, fmt.num(t.daysTaken)), h('td', { class: 'num' }, pct(t.utilization)),
+          h('td', { class: 'num' }, fmt.num(t.pending)), h('td', { class: 'num' }, fmt.num(t.onLeaveToday)));
+        if (onOpenTeam) {
+          tr.addEventListener('click', () => onOpenTeam(t.team_id));
+          tr.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') onOpenTeam(t.team_id); });
+        }
+        return tr;
+      }))));
+  }
+
+  LD.reports = { renderPerson, renderGroup, membersTable, teamTable, tile };
+
+  // ------------------------------------------------------------------ the Reports page
+
+  const state = { scope: 'person', id: '', data: null, loading: false, error: '', key: '' };
+
+  async function load(actions, scope, id) {
+    state.scope = scope; state.id = id; state.loading = true; state.error = '';
+    actions.rerender();
+    try { state.data = await LD.api.report(scope, id); state.key = scope + ':' + id; } catch (e) { state.error = e.message; state.data = null; }
+    state.loading = false;
+    actions.rerender();
+  }
+
+  LD.views.reports = {
+    title: 'Reports',
+    reset() { state.data = null; state.key = ''; state.scope = 'person'; state.id = ''; },
+    render(data, actions) {
+      const scopes = data.reportScopes || [{ scope: 'person', id: data.me.emp_id, label: 'Me' }];
+      if (!state.data && !state.loading && !state.error) load(actions, 'person', data.me.emp_id);
+      const select = h('select', { class: 'input', id: 'report-scope', 'aria-label': 'Report for' },
+        scopes.map((s) => h('option', { value: s.scope + ':' + s.id, selected: state.key === s.scope + ':' + s.id }, s.label)),
+        state.data && state.data.scope === 'person' && state.data.id !== data.me.emp_id
+          ? h('option', { value: 'person:' + state.data.id, selected: true }, state.data.title) : null);
+      select.addEventListener('change', () => { const [sc, id] = select.value.split(':'); load(actions, sc, id); });
+
+      const open = (empId) => load(actions, 'person', empId);
+      const openTeam = (teamId) => load(actions, 'team', teamId);
+      const head = h('div', { class: 'page-head' },
+        h('div', null, h('h1', null, 'Reports'), h('p', { class: 'muted' }, state.data ? state.data.title + ' · ' + state.data.year : 'Your leave at a glance')),
+        scopes.length > 1 ? h('label', { class: 'field', for: 'report-scope', style: { minWidth: '220px' } }, h('span', null, 'Report for'), select) : null);
+
+      let body;
+      if (state.error) body = Notice('bad', 'Could not load the report', state.error);
+      else if (!state.data) body = h('div', { class: 'card' }, EmptyState('Loading…', null));
+      else body = state.data.scope === 'person' ? renderPerson(state.data, open) : renderGroup(state.data, open, openTeam);
+      return h('div', { class: 'stack', style: { gap: '18px' } }, head, body);
+    },
+  };
+})(window.LD);
+</script>

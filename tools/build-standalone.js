@@ -14,7 +14,7 @@ const BUNDLES = {
   'Core.gs':     ['core/Schema', 'core/Errors', 'core/Codec', 'core/DateUtil', 'core/Repository', 'core/Db'],
   'Services.gs': ['services/Config', 'services/Audit', 'services/Directory', 'services/Catalog', 'services/Auth', 'services/Identity',
                   'services/BalanceService', 'services/ApprovalRouter', 'services/DecisionPolicy', 'services/RequestView',
-                  'services/LeaveService', 'services/ApprovalService', 'services/AdminService'],
+                  'services/LeaveService', 'services/ApprovalService', 'services/ReportService', 'services/AdminService'],
   'Notify.gs':   ['notify/Messages', 'notify/SlackChannel', 'notify/EmailChannel', 'notify/Notifier'],
   'Code.gs':     ['Api', 'WebApp'],
 };

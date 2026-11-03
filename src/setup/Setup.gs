@@ -80,17 +80,6 @@ const TestTeam = (() => {
     log.push((existing ? 'Updated ' : 'Added ') + table + ' ' + row[t.idKey] + (row.name ? ' · ' + row.name : '') + (row.email ? ' · ' + row.email : ''));
   }
 
-  /** Yearly quota × months active so far this year (whole quarters already credited). */
-  function accruedSoFar(person, yearly) {
-    const today = DateUtil.today();
-    const year = DateUtil.year(today);
-    let total = 0;
-    for (let q = 1; q <= DateUtil.quarterOf(today); q++) {
-      total += roundTo_(yearly * DateUtil.monthsActiveInQuarter(person.join_date, person.end_date, year, q) / 12, 0.5);
-    }
-    return total;
-  }
-
   function apply(actor) {
     const log = [];
     const now = DateUtil.now();
@@ -125,18 +114,8 @@ const TestTeam = (() => {
     people.forEach((p) => employees.update(p.emp_id, { team_id: p.team_id, manager_id: p.manager_id }));
 
     // 3. Balances for this year (only if missing, so test usage is kept).
-    const year = DateUtil.year(DateUtil.today());
-    const balances = Db.table('LeaveBalances');
-    people.forEach((p) => {
-      Db.table('Policies').where((r) => r.policy_id === p.policy_id && r.active).forEach((rule) => {
-        if (balances.find((b) => b.emp_id === p.emp_id && b.type_id === rule.type_id && Number(b.year) === year)) return;
-        const accrued = accruedSoFar(p, Number(rule.yearly_quota));
-        balances.insert({ bal_id: balances.nextId('B', 4), emp_id: p.emp_id, year: year, type_id: rule.type_id,
-          accrued: accrued, adjusted: 0, used: 0, pending: 0, available: accrued,
-          last_accrual: year + '-Q' + DateUtil.quarterOf(DateUtil.today()), updated_at: now });
-        log.push('Balance ' + p.name + ' ' + rule.type_id + ': ' + accrued + ' days');
-      });
-    });
+    people.forEach((p) => BalanceService.ensureYear(p).forEach((line) => log.push('Balance ' + line)));
+
     return log;
   }
 

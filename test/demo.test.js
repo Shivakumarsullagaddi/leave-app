@@ -54,9 +54,9 @@ console.log('✓ intern applied → lead approved; employee applied → CXO reje
 // Admin dashboard
 assert.strictEqual(run(`apiAdminOverview('${S.EMPLOYEE}')`).code, 'FORBIDDEN');
 const ov = run(`apiAdminOverview('${S.ADMIN}')`).data;
-assert.ok(ov.stats.people >= 23 && ov.requests.length >= 15 && ov.balances.length === ov.stats.people);
+assert.ok(ov.report.stats.members >= 23 && ov.requests.length >= 15 && ov.people.length >= ov.report.stats.members && ov.teams.length >= 1);
 assert.ok(ov.requests.some((r) => r.req_id === r1.req_id && r.status === 'APPROVED'));
-console.log('✓ admin dashboard:', JSON.stringify(ov.stats));
+console.log('✓ admin dashboard:', JSON.stringify(ov.report.stats));
 console.log('  employee is refused the admin dashboard');
 
 // Switch role
