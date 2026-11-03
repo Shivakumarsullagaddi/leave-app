@@ -59,10 +59,6 @@ function setupDemo() {
     lines.push('ADMIN_EMAILS = ' + admins);
     PropertiesService.getScriptProperties().setProperty('LOGIN_MODE', 'PICKER');
     lines.push('Entrance: role picker (' + LD_CONFIG.TEST_ACCOUNTS.map((t) => t.label).join(', ') + ')');
-    const code = Auth.ensurePasscode();
-    lines.push(code
-      ? 'ADMIN PASSCODE (new): ' + code + '  → note it down. Change it later in Admin → Policies, or in Script Properties (ADMIN_PASSCODE).'
-      : 'Admin passcode: already set (unchanged). See Script Properties → ADMIN_PASSCODE.');
     return lines;
   });
   SetupUi.notify('Prototype ready', log.join('\n'));
@@ -142,8 +138,7 @@ function checkSignIn() {
   let lines;
   if (Auth.mode() === 'picker') {
     lines = [
-      'Mode: prototype role picker (LOGIN_MODE = PICKER).',
-      (Auth.passcodeIsSet() ? '✔' : '✘') + ' Admin passcode ' + (Auth.passcodeIsSet() ? 'is set (Script Property ADMIN_PASSCODE).' : 'is missing → run setupDemo or add Script Property ADMIN_PASSCODE.'),
+      'Mode: prototype role picker (LOGIN_MODE = PICKER). No passwords.',
       '• Entrance buttons: ' + LD_CONFIG.TEST_ACCOUNTS.map((t) => t.label + ' → ' + t.name).join(', '),
       '• Deployment must be: Execute as = Me; Who has access = Anyone. No Sheet sharing needed.',
       urlLine + (urlOk ? '' : ' (only needed for "Open request" links in emails)'),

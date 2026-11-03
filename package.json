@@ -3,7 +3,7 @@
   "private": true,
   "description": "Darukaa Leave Desk: leave management on Google Sheets + Apps Script",
   "scripts": {
-    "test": "node test/flow.test.js && node test/auth.test.js && node test/upgrade.test.js && node test/demo.test.js && node test/admin.test.js && node test/passcode.test.js",
+    "test": "node test/flow.test.js && node test/auth.test.js && node test/upgrade.test.js && node test/demo.test.js && node test/admin.test.js",
     "screens": "node test/render.js",
     "push": "clasp push"
   }

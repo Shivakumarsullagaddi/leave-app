@@ -5,7 +5,7 @@ const { load } = require('./load');
 const P = load({ user: '', now: '2026-11-04T05:00:00Z' });
 const { env, run } = P;
 run('setupDatabase()'); run('setupDemo()'); env.webapp = true; run('Db.refresh()');
-const pick = (k, code) => run(`apiPick('', '${k}', ${JSON.stringify(code === undefined ? P.props.ADMIN_PASSCODE || '' : code)})`).data.session;
+const pick = (k) => run(`apiPick('', '${k}')`).data.session;
 const S = { EMP: pick('EMPLOYEE'), INTERN: pick('INTERN'), LEAD: pick('LEAD'), CXO: pick('CXO'), ADMIN: pick('ADMIN') };
 const call = (fn, ...args) => run(`${fn}(${args.map((a) => JSON.stringify(a)).join(', ')})`);
 const ok = (res, label) => { assert.ok(res.ok, label + ': ' + res.error); return res.data; };

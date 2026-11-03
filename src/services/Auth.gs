@@ -3,8 +3,7 @@
  *
  *  PICKER  Script Property LOGIN_MODE=PICKER (prototype). The entrance shows one button
  *          per persona in LD_CONFIG.TEST_ACCOUNTS; clicking one opens a session as that
- *          person. Set up by setupDemo(). The Admin button also needs the admin passcode
- *          (Script Property ADMIN_PASSCODE); 5 wrong tries lock it for 15 minutes.
+ *          person. No passwords. Set up by setupDemo().
  *  OAUTH   OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET set: "Sign in with Google" (below).
  *  GOOGLE  Neither: Google's built-in session (Session.getActiveUser).
  *
@@ -35,65 +34,10 @@ const Auth = (() => {
   }
   const isEnabled = () => mode() !== 'google';
 
-  function openSession(email, seconds) {
+  function openSession(email) {
     const session = randomToken();
-    cache().put('session:' + session, String(email).toLowerCase(), seconds || SESSION_SECONDS);
+    cache().put('session:' + session, String(email).toLowerCase(), SESSION_SECONDS);
     return session;
-  }
-
-  // ------------------------------------------------------------------ admin passcode
-  const PASSCODE_KEY = 'ADMIN_PASSCODE';
-  const ADMIN_SESSION_SECONDS = 2 * 60 * 60;
-  const MAX_TRIES = 5;
-  const LOCK_SECONDS = 15 * 60;
-  const FAIL_KEY = 'admin_passcode_fails';
-
-  /** Compares without stopping at the first different character. */
-  function sameText(a, b) {
-    a = String(a); b = String(b);
-    let diff = a.length ^ b.length;
-    for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
-    return diff === 0;
-  }
-
-  const passcodeIsSet = () => !!prop(PASSCODE_KEY);
-
-  function checkPasscode(passcode) {
-    if (!passcodeIsSet()) throw Errors.setup('Admin is locked: no admin passcode yet. Run setupDemo in the Apps Script editor (it creates one), or add the Script Property ADMIN_PASSCODE.');
-    const fails = Number(cache().get(FAIL_KEY)) || 0;
-    if (fails >= MAX_TRIES) throw Errors.forbidden('Too many wrong passcodes. Admin is locked for 15 minutes.');
-    if (!sameText(String(passcode || '').trim(), prop(PASSCODE_KEY))) {
-      cache().put(FAIL_KEY, String(fails + 1), LOCK_SECONDS);
-      const left = MAX_TRIES - fails - 1;
-      throw Errors.forbidden(left > 0 ? 'Wrong passcode. ' + left + (left === 1 ? ' try' : ' tries') + ' left.' : 'Too many wrong passcodes. Admin is locked for 15 minutes.');
-    }
-    cache().remove(FAIL_KEY);
-  }
-
-  /** Admin changes the passcode: needs the current one. */
-  function changePasscode(current, next) {
-    checkPasscode(current);
-    const value = String(next || '').trim();
-    if (value.length < 6) throw Errors.invalid('The new passcode needs at least 6 characters.');
-    if (/\s/.test(value)) throw Errors.invalid('The passcode cannot contain spaces.');
-    PropertiesService.getScriptProperties().setProperty(PASSCODE_KEY, value);
-  }
-
-  /** A random passcode, e.g. "7KQ4-M9TX" (no 0/O/1/I to avoid mix-ups). */
-  function newPasscode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const hex = Utilities.getUuid().replace(/-/g, '');
-    let out = '';
-    for (let i = 0; i < 8; i++) out += chars[parseInt(hex.substr(i * 2, 2), 16) % chars.length];
-    return out.slice(0, 4) + '-' + out.slice(4);
-  }
-
-  /** Creates a passcode if none is set. @returns {string} the new passcode, or '' when one already exists */
-  function ensurePasscode() {
-    if (passcodeIsSet()) return '';
-    const code = newPasscode();
-    PropertiesService.getScriptProperties().setProperty(PASSCODE_KEY, code);
-    return code;
   }
 
   /** Prototype entrance buttons: persona key + label + who it is. */
@@ -101,20 +45,16 @@ const Auth = (() => {
     return LD_CONFIG.TEST_ACCOUNTS.map((t) => {
       const e = Directory.byEmail(t.email);
       return { persona: t.persona, label: t.label, name: e ? e.name : t.name,
-        team: e ? (Directory.profile(e).team_name || '') : '', ready: !!e, needsPasscode: !!t.admin };
+        team: e ? (Directory.profile(e).team_name || '') : '', ready: !!e };
     });
   }
 
-  /** Opens a session as the persona's employee (picker mode only). Admin needs the passcode. */
-  function pick(persona, passcode) {
+  /** Opens a session as the persona's employee (picker mode only). */
+  function pick(persona) {
     if (mode() !== 'picker') throw Errors.forbidden('The role picker is switched off.');
     const t = LD_CONFIG.TEST_ACCOUNTS.find((a) => a.persona === persona);
     if (!t) throw Errors.invalid('Unknown role.');
     if (!Directory.byEmail(t.email)) throw Errors.setup('"' + t.label + '" is not set up yet. Run setupDemo in the Apps Script editor.');
-    if (t.admin) {
-      checkPasscode(passcode);
-      return { session: openSession(t.email, ADMIN_SESSION_SECONDS) };
-    }
     return { session: openSession(t.email) };
   }
   const redirectUri = () => Config.get('APP_URL') || ScriptApp.getService().getUrl();
@@ -178,5 +118,5 @@ const Auth = (() => {
     if (emailFor(session)) cache().remove('session:' + session);
   }
 
-  return { mode, isEnabled, personas, pick, changePasscode, ensurePasscode, passcodeIsSet, loginUrl, handleCallback, emailFor, logout };
+  return { mode, isEnabled, personas, pick, loginUrl, handleCallback, emailFor, logout };
 })();

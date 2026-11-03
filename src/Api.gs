@@ -60,8 +60,8 @@ function apiSetViewAs(session, empId) {
 }
 
 /** Prototype entrance: open a session as one persona (Employee, Intern, Team Lead, CXO, Admin). */
-function apiPick(_noSession, persona, passcode) {
-  return respond_(() => Auth.pick(persona, passcode));
+function apiPick(_noSession, persona) {
+  return respond_(() => Auth.pick(persona));
 }
 
 /** Reports: own, team (leads / C-suite) and organization (admin). scope: person | team | org */
@@ -99,17 +99,6 @@ function apiAdminAdjustBalance(session, empId, typeId, days, reason) {
 
 function apiAdminSaveQuota(session, ruleId, yearlyQuota) {
   return respond_(() => Db.transaction(() => AdminService.saveQuota(requireAdmin_(session), ruleId, yearlyQuota)));
-}
-
-/** Admin changes the admin passcode (needs the current one). */
-function apiAdminChangePasscode(session, current, next) {
-  return respond_(() => {
-    const who = requireAdmin_(session);
-    Auth.changePasscode(current, next);
-    Db.transaction(() => Audit.log({ actor: who.email, action: 'UPDATE', entity: 'Settings', entity_id: 'ADMIN_PASSCODE',
-      field: 'passcode', reason: 'Admin changed the admin passcode (value not logged)' }));
-    return true;
-  });
 }
 
 function apiSignOut(session) {

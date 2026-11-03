@@ -36,14 +36,13 @@
     decide:    (reqId, decision, comment) => call('apiDecide', reqId, decision, comment),
     setViewAs: (empId) => call('apiSetViewAs', empId),
     signOut:   () => call('apiSignOut').finally(() => setSession('')),
-    pick:      (persona, passcode) => call('apiPick', persona, passcode || '').then((res) => { setSession(res.session); return res; }),
+    pick:      (persona) => call('apiPick', persona).then((res) => { setSession(res.session); return res; }),
     adminOverview: () => call('apiAdminOverview'),
     report:        (scope, id) => call('apiReport', scope, id),
     adminSavePerson:    (input) => call('apiAdminSavePerson', input),
     adminSaveTeam:      (input) => call('apiAdminSaveTeam', input),
     adminAdjustBalance: (empId, typeId, days, reason) => call('apiAdminAdjustBalance', empId, typeId, days, reason),
     adminSaveQuota:     (ruleId, quota) => call('apiAdminSaveQuota', ruleId, quota),
-    adminChangePasscode: (current, next) => call('apiAdminChangePasscode', current, next),
   };
 })(window.LD);
 </script>

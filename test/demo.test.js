@@ -19,7 +19,7 @@ assert.strictEqual(boot.personas.map((p) => p.label).join(', '), 'Employee, Inte
 assert.ok(boot.personas.every((p) => p.ready));
 console.log('✓ entrance shows:', boot.personas.map((p) => p.label + ' → ' + p.name).join(' | '));
 
-const pick = (persona) => { const r = run(`apiPick('', '${persona}', ${JSON.stringify(P.props.ADMIN_PASSCODE)})`); assert.ok(r.ok, persona + ': ' + r.error); return r.data.session; };
+const pick = (persona) => { const r = run(`apiPick('', '${persona}')`); assert.ok(r.ok, persona + ': ' + r.error); return r.data.session; };
 const S = {};
 ['EMPLOYEE', 'INTERN', 'LEAD', 'CXO', 'ADMIN'].forEach((k) => { S[k] = pick(k); });
 const who = (k) => run(`apiBootstrap('${S[k]}')`).data;
