@@ -1,6 +1,8 @@
 /**
  * Config.gs — typed read access to the Settings tab (key → value).
  * Rows come from the Settings repository, which already caches per execution.
+ * If a key is empty in the sheet, a Script Property with the same name is used
+ * (handy for APP_URL, which belongs with the deployment rather than the data).
  */
 const Config = (() => {
   function values() {
@@ -10,7 +12,8 @@ const Config = (() => {
   }
 
   function get(key, fallback) {
-    const v = values()[key];
+    let v = values()[key];
+    if (v === undefined || v === '') v = PropertiesService.getScriptProperties().getProperty(key) || '';
     return v === undefined || v === '' ? (fallback === undefined ? '' : fallback) : String(v);
   }
   const bool = (key) => get(key, 'FALSE').toUpperCase() === 'TRUE';

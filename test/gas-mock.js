@@ -59,12 +59,25 @@ function range(sheet, r, c, nr, nc) {
     },
     getValue() { const v = sheet.cell(r, c); return v === undefined ? '' : v; },
     setValues(vals) {
+      Object.entries(sheet.rules || {}).forEach(([col, ref]) => {
+        if (!ref) return;
+        const j = Number(col) - c; if (j < 0 || j >= nc) return;
+        const allowed = ref.getValues().map((x) => x[0]);
+        vals.forEach((row, i) => {
+          const v = row[j];
+          if (r + i >= 2 && v !== '' && v !== null && allowed.indexOf(v) === -1) {
+            throw new Error('The data that you entered in cell ' + String.fromCharCode(64 + Number(col)) + (r + i) + ' violates the data validation rules set on this cell.');
+          }
+        });
+      });
       if (vals.length !== nr || vals[0].length !== nc) throw new Error(`setValues size ${vals.length}x${vals[0].length} != ${nr}x${nc}`);
       vals.forEach((row, i) => row.forEach((v, j) => sheet.set(r + i, c + j, v))); return self;
     },
     setValue(v) { sheet.set(r, c, v); return self; },
     clearContent() { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) sheet.set(r + i, c + j, ''); return self; },
     setDataValidation(rule) { // checkboxes fill empty cells with FALSE, like real Sheets
+      sheet.rules = sheet.rules || {};
+      for (let j = 0; j < nc; j++) sheet.rules[c + j] = rule && rule.kind === 'ref' && rule.strict ? rule.ref : null;
       if (rule && rule.kind === 'checkbox') for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) { const v = sheet.cell(r + i, c + j); if (v === undefined || v === '') sheet.set(r + i, c + j, false); }
       return self;
     },
@@ -91,7 +104,16 @@ function makeEnv(opts) {
   const book = new Book();
   const props = {};
   const env = { book, mail: [], fetches: [], user: opts.user, today: opts.now, cache: {}, tokenResponse: null };
-  const dv = () => { const b = { kind: null }; return new Proxy(b, { get: (t, k) => (k === 'build' ? () => ({ kind: t.kind }) : k === 'requireCheckbox' ? () => { t.kind = 'checkbox'; return p; } : () => p) }); };
+  const dv = () => {
+    const b = { kind: null, strict: true };
+    return new Proxy(b, { get: (t, k) => {
+      if (k === 'build') return () => ({ kind: t.kind, ref: t.ref, strict: t.strict });
+      if (k === 'requireCheckbox') return () => { t.kind = 'checkbox'; return p; };
+      if (k === 'requireValueInRange') return (range) => { t.kind = 'ref'; t.ref = range; return p; };
+      if (k === 'setAllowInvalid') return (v) => { t.strict = !v; return p; };
+      return () => p;
+    } });
+  };
   let p;
   const ctx = {
     console, Utilities, Logger: { log: () => {} },

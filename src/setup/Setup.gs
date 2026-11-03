@@ -89,15 +89,22 @@ const TestTeam = (() => {
       });
     });
 
-    // 2. Team, then the three people.
+    // 2. People first (no team yet), then the team, then link them. The sheet's dropdowns
+    //    only accept ids that already exist, so the order matters. CXO → Lead → Employee
+    //    also makes sure each manager exists before the person who reports to them.
+    const person = (p, extra) => Object.assign({
+      emp_id: p.emp_id, name: p.name, email: p.email, role_level: p.role_level, emp_type: 'FT',
+      policy_id: 'P-FT', join_date: p.join_date, end_date: '', contract_months: '', slack_user_id: '',
+      status: 'Active', updated_at: now,
+    }, extra);
+    people.forEach((p) => {
+      const existing = employees.get(p.emp_id);
+      upsert('Employees', person(p, existing ? {} : { team_id: '', manager_id: p.manager_id, created_at: now }), log, actor);
+    });
     const team = LD_CONFIG.TEST_TEAM;
     upsert('Teams', { team_id: team.team_id, team_name: team.team_name, lead_id: testLead_(), csuite_id: testCxo_(),
       slack_channel: '#leave-requests', active: true, created_at: now }, log, actor);
-    people.forEach((p) => upsert('Employees', {
-      emp_id: p.emp_id, name: p.name, email: p.email, role_level: p.role_level, emp_type: 'FT', team_id: p.team_id,
-      manager_id: p.manager_id, policy_id: 'P-FT', join_date: p.join_date, end_date: '', contract_months: '',
-      slack_user_id: '', status: 'Active', created_at: now, updated_at: now,
-    }, log, actor));
+    people.forEach((p) => employees.update(p.emp_id, { team_id: p.team_id, manager_id: p.manager_id }));
 
     // 3. Balances for this year (only if missing, so test usage is kept).
     const year = DateUtil.year(DateUtil.today());
