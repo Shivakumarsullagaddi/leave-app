@@ -82,22 +82,36 @@
     const brand = h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, 'LD'), data.appName);
     if (data.personas) {
       const errorBox = h('div', { 'aria-live': 'polite' });
-      const choose = async (p, btn) => {
+      const gate = h('div');
+      const enter = async (p, btn, passcode) => {
         btn.disabled = true;
-        try { await LD.api.pick(p.persona); store.set({ status: 'loading', view: p.persona === 'ADMIN' ? 'admin' : 'overview', focusReq: '' }); await load(); }
+        try { await LD.api.pick(p.persona, passcode); store.set({ status: 'loading', view: p.persona === 'ADMIN' ? 'admin' : 'overview', focusReq: '' }); await load(); }
         catch (e) { errorBox.replaceChildren(Notice('bad', null, e.message)); btn.disabled = false; }
       };
+      // Admin asks for the passcode first; the other roles open straight away.
+      const askPasscode = (p) => {
+        const input = h('input', { class: 'input', id: 'admin-passcode', type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Admin passcode' });
+        const go = h('button', { class: 'btn primary', type: 'submit' }, 'Open admin');
+        const form = h('form', { class: 'passcode-form', 'aria-label': 'Admin passcode' },
+          h('label', { class: 'field', for: 'admin-passcode' }, h('span', null, p.label + ' needs the admin passcode'), input),
+          h('div', { class: 'row' }, go, h('button', { class: 'btn', type: 'button', onClick: () => { gate.replaceChildren(); errorBox.replaceChildren(); } }, 'Cancel')));
+        form.addEventListener('submit', (ev) => { ev.preventDefault(); errorBox.replaceChildren(); enter(p, go, input.value).then(() => { input.value = ''; input.focus(); }); });
+        gate.replaceChildren(form);
+        input.focus();
+      };
+      const choose = (p, btn) => { errorBox.replaceChildren(); if (p.needsPasscode) askPasscode(p); else { gate.replaceChildren(); enter(p, btn); } };
       return h('div', { class: 'signin' }, h('div', { class: 'card signin-card wide' }, brand,
         h('h1', null, 'Choose who you want to be'),
         h('p', { class: 'muted' }, 'Prototype entrance. Pick a role to open that person\'s dashboard. Use "Switch role" at the top to come back.'),
         h('div', { class: 'persona-grid' }, data.personas.map((p) => {
           const btn = h('button', { class: 'persona', type: 'button', disabled: !p.ready },
             h('span', { class: 'persona-label' }, p.label),
-            h('span', { class: 'persona-who' }, p.ready ? p.name + (p.team ? ' · ' + p.team : '') : 'Not set up yet'));
+            h('span', { class: 'persona-who' }, p.ready ? p.name + (p.team ? ' · ' + p.team : '') : 'Not set up yet'),
+            p.needsPasscode ? h('span', { class: 'persona-lock' }, 'Passcode required') : null);
           btn.addEventListener('click', () => choose(p, btn));
           return btn;
         })),
-        errorBox));
+        gate, errorBox));
     }
     return h('div', { class: 'signin' },
       h('div', { class: 'card signin-card' }, brand,

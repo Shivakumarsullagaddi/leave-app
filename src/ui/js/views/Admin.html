@@ -253,7 +253,28 @@
           });
           return h('tr', null, h('td', null, h('b', null, r.policy_name)), h('td', null, r.type_name), h('td', null, fmt.title(r.accrual)),
             h('td', { class: 'num' }, q), h('td', null, save));
-        })))));
+        })))),
+      passcodeCard());
+  }
+
+  /** Change the admin passcode (the one asked for on the entrance's Admin button). */
+  function passcodeCard() {
+    const field = (id, label, auto) => h('label', { class: 'field', for: id }, h('span', null, label),
+      input(id, '', 'password', { autocomplete: auto, required: true }));
+    const cur = field('pc-current', 'Current passcode', 'current-password');
+    const next = field('pc-new', 'New passcode (6+ characters, no spaces)', 'new-password');
+    const again = field('pc-again', 'New passcode again', 'new-password');
+    const val = (f) => f.querySelector('input').value;
+    const save = ActionButton('Change passcode', 'primary', async () => {
+      if (val(next) !== val(again)) throw new Error('The two new passcodes do not match.');
+      await LD.api.adminChangePasscode(val(cur), val(next));
+      [cur, next, again].forEach((f) => { f.querySelector('input').value = ''; });
+      toast('Admin passcode changed. Share it only with admins.');
+    });
+    return h('section', { class: 'card stack', style: { maxWidth: '520px' } },
+      h('h3', null, 'Admin passcode'),
+      h('p', { class: 'muted small' }, 'Needed to open Admin from the entrance. Admin sessions end after 2 hours. 5 wrong tries lock Admin for 15 minutes. Stored in Script Properties (ADMIN_PASSCODE), never in the Sheet.'),
+      cur, next, again, h('div', { class: 'row' }, save));
   }
 
   // ------------------------------------------------------------------ page
