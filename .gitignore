@@ -4,3 +4,4 @@ node_modules/
 dist-standalone/
 test/shots/
 client_secret_*.json
+CLAUDE.md
