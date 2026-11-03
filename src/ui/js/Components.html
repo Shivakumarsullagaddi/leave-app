@@ -1,0 +1,85 @@
+<script>
+/**
+ * Components — reusable building blocks. Each takes data and returns a DOM node.
+ * Views compose these; they never duplicate their markup.
+ */
+(function (LD) {
+  const { h, fmt, toast } = LD.dom;
+
+  const STATUS_LABEL = { PENDING: 'Pending', APPROVED: 'Approved', REJECTED: 'Rejected', CANCELLED: 'Cancelled', NO_ACTION: 'No action', AUTO: 'Auto-approved' };
+  const StatusChip = (status) => h('span', { class: 'chip ' + status }, STATUS_LABEL[status] || status);
+  const Chip = (text, tone) => h('span', { class: 'chip ' + (tone || 'neutral') }, text);
+
+  const Notice = (tone, title, text) => h('div', { class: 'notice ' + tone, role: tone === 'bad' ? 'alert' : null },
+    title ? h('b', null, title) : null, text ? h('span', null, text) : null);
+
+  const EmptyState = (title, text, action) => h('div', { class: 'empty' }, h('b', null, title), text ? h('span', null, text) : null, action || null);
+
+  const SectionTitle = (title, extra) => h('div', { class: 'section-title' }, h('h2', null, title), extra || null);
+
+  /** Button that shows a spinner and blocks double clicks while `work()` runs. */
+  function ActionButton(label, cls, work) {
+    const btn = h('button', { class: 'btn ' + (cls || ''), type: 'button' }, label);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.replaceChildren(h('span', { class: 'spinner', 'aria-hidden': 'true' }), label);
+      try { await work(); } catch (e) { toast(e.message, 'bad'); } finally {
+        if (btn.isConnected) { btn.disabled = false; btn.replaceChildren(label); }
+      }
+    });
+    return btn;
+  }
+
+  function BalanceCard(b) {
+    const total = Math.max(b.accrued + b.adjusted, 0.0001);
+    const pct = (v) => Math.max(0, Math.min(100, (v / total) * 100)) + '%';
+    return h('div', { class: 'card' },
+      h('div', { class: 'balance-top' },
+        h('div', { class: 'row' }, h('span', { class: 'dot', style: { background: b.color || 'var(--accent)' } }), h('h3', null, b.name)),
+        h('span', { class: 'muted small' }, 'of ' + fmt.num(b.accrued + b.adjusted) + ' credited')),
+      h('div', null, h('span', { class: 'balance-num' }, fmt.num(b.available)), h('span', { class: 'muted' }, ' days left')),
+      h('div', { class: 'meter', role: 'img', 'aria-label': fmt.num(b.used) + ' used, ' + fmt.num(b.pending) + ' pending, ' + fmt.num(b.available) + ' left' },
+        h('span', { style: { width: pct(b.used), background: b.color || 'var(--accent)' } }),
+        h('span', { style: { width: pct(b.pending), background: 'var(--warn)', opacity: '.55' } })),
+      h('div', { class: 'legend' },
+        h('span', null, h('i', { style: { background: b.color || 'var(--accent)' } }), fmt.num(b.used) + ' used'),
+        h('span', null, h('i', { style: { background: 'var(--warn)', opacity: '.55' } }), fmt.num(b.pending) + ' pending'),
+        b.adjusted ? h('span', null, (b.adjusted > 0 ? '+' : '') + fmt.num(b.adjusted) + ' adjusted') : null));
+  }
+
+  /** Every approver's decision in time order: who, what, when, comment. */
+  function ApprovalTrail(approvals) {
+    if (!approvals || !approvals.length) return null;
+    return h('div', { class: 'trail' }, approvals.map((a) => h('div', { class: 'trail-item' },
+      StatusChip(a.decision),
+      h('span', { class: 'who' }, h('b', null, a.name), h('span', { class: 'muted' }, ' · ' + fmt.role(a.role))),
+      h('span', { class: 'when' }, fmt.when(a.decided_at)),
+      a.comment ? h('span', { class: 'trail-comment' }, '“' + a.comment + '”') : null)));
+  }
+
+  /**
+   * One leave request. opts: { showEmployee, footer (Node), highlight }
+   */
+  function RequestCard(r, opts) {
+    const o = opts || {};
+    return h('article', { class: 'card' + (o.highlight ? ' highlight' : ''), id: 'req-' + r.req_id },
+      h('div', { class: 'req-head' },
+        h('div', { class: 'stack', style: { gap: '4px' } },
+          h('div', { class: 'req-title' },
+            o.showEmployee ? h('span', null, r.employee ? r.employee.name : r.emp_id) : null,
+            h('span', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'dot', style: { background: r.type_color || 'var(--accent)' } }), r.type_name),
+            r.over_quota ? Chip(fmt.num(r.lop_days) + ' LOP', 'warn') : null),
+          h('div', { class: 'req-meta' },
+            h('span', null, fmt.range(r.start_date, r.end_date)),
+            h('span', null, fmt.days(r.days, r.half_day)),
+            o.showEmployee && r.employee ? h('span', null, r.employee.team_name + ' · ' + fmt.type(r.employee.emp_type)) : null,
+            h('span', null, r.req_id))),
+        StatusChip(r.status)),
+      r.reason ? h('p', { class: 'req-reason' }, r.reason) : null,
+      ApprovalTrail(r.approvals),
+      o.footer || null);
+  }
+
+  LD.ui = { StatusChip, Chip, Notice, EmptyState, SectionTitle, ActionButton, BalanceCard, ApprovalTrail, RequestCard };
+})(window.LD);
+</script>

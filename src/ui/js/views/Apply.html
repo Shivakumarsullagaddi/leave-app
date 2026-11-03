@@ -1,0 +1,98 @@
+<script>
+/**
+ * Apply — leave form with a live preview from the server:
+ * working days, paid vs Loss of Pay, and who will be asked to approve.
+ * The draft survives navigation, so switching tabs doesn't lose typing.
+ */
+(function (LD) {
+  const { h, fmt, toast, debounce } = LD.dom;
+  const { Notice, ActionButton, SectionTitle } = LD.ui;
+
+  let draft = null;
+  const freshDraft = (data) => ({ type_id: (data.leaveTypes[0] || {}).type_id || '', start_date: '', end_date: '', half_day: false, reason: '' });
+
+  function previewPanel(state) {
+    if (state.error) return Notice('bad', 'Check the dates', state.error);
+    if (!state.result) return Notice('info', 'Pick your dates', 'You will see the working days, your balance and who approves, before you send anything.');
+    const p = state.result;
+    return h('div', { class: 'stack' },
+      h('div', { class: 'stats' },
+        h('div', { class: 'stat' }, h('b', null, fmt.num(p.days)), h('span', null, 'Working days')),
+        h('div', { class: 'stat' }, h('b', null, fmt.num(p.paid)), h('span', null, 'From balance')),
+        h('div', { class: 'stat lop' }, h('b', null, fmt.num(p.lop)), h('span', null, 'Loss of Pay'))),
+      p.overQuota ? Notice('warn', 'You are over your quota',
+        'You have ' + fmt.num(p.available) + ' day(s) left. You can still send this; if approved, ' + fmt.num(p.lop) + ' day(s) will be Loss of Pay.') : null,
+      p.autoApprove
+        ? Notice('good', 'Approved automatically', 'C-suite leave is approved and logged straight away.')
+        : Notice('info', 'Who will be asked',
+          p.approvers.map((a) => a.name + ' (' + fmt.role(a.role) + ')').join(' and ') + (p.approvers.length > 1 ? ' at the same time. Either approval is enough.' : '.')));
+  }
+
+  LD.views.apply = {
+    title: 'Apply',
+    render(data, actions) {
+      if (!draft) draft = freshDraft(data);
+      const preview = { result: null, error: '' };
+      const previewBox = h('div');
+      const paint = () => previewBox.replaceChildren(previewPanel(preview));
+
+      const ready = () => draft.type_id && draft.start_date && (draft.half_day || draft.end_date);
+      const refresh = debounce(async () => {
+        if (!ready()) { preview.result = null; preview.error = ''; return paint(); }
+        try { preview.result = await LD.api.preview(draft); preview.error = ''; }
+        catch (e) { preview.result = null; preview.error = e.message; }
+        paint();
+      }, 350);
+
+      const typeOf = () => data.leaveTypes.find((t) => t.type_id === draft.type_id) || {};
+      const canHalf = () => data.halfDayAllowed && typeOf().half_day_allowed;
+
+      const typeSel = h('select', { class: 'input', id: 'f-type' }, data.leaveTypes.map((t) => h('option', { value: t.type_id, selected: t.type_id === draft.type_id }, t.name)));
+      const start = h('input', { class: 'input', type: 'date', id: 'f-start', value: draft.start_date });
+      const end = h('input', { class: 'input', type: 'date', id: 'f-end', value: draft.end_date, min: draft.start_date, disabled: draft.half_day });
+      const half = h('input', { type: 'checkbox', id: 'f-half', checked: draft.half_day, disabled: !canHalf() });
+      const reason = h('textarea', { class: 'input', id: 'f-reason', maxlength: '500', placeholder: 'Optional, but it helps your approvers' });
+      reason.value = draft.reason;
+
+      const sync = () => {
+        draft.type_id = typeSel.value;
+        draft.start_date = start.value;
+        draft.half_day = half.checked && canHalf();
+        if (draft.half_day || !end.value || end.value < start.value) end.value = start.value;
+        draft.end_date = end.value;
+        draft.reason = reason.value;
+        end.min = start.value;
+        end.disabled = draft.half_day;
+        half.disabled = !canHalf();
+        refresh();
+      };
+      [typeSel, start, end, half].forEach((el) => el.addEventListener('change', sync));
+      reason.addEventListener('input', () => { draft.reason = reason.value; });
+
+      const submit = ActionButton('Send request', 'primary', async () => {
+        if (!ready()) throw new Error('Pick a leave type and dates first.');
+        const saved = await actions.submit(draft);
+        toast(saved.status === 'APPROVED' ? 'Leave approved and logged.' : 'Request sent to ' + saved.approvals.map((a) => a.name).join(' and ') + '.');
+        draft = null;
+        actions.navigate('requests', saved.req_id);
+      });
+
+      paint();
+      if (ready()) refresh();
+
+      return h('div', { class: 'two-col' },
+        h('section', { class: 'card' },
+          h('h1', null, 'Apply for leave'),
+          h('div', { class: 'form-grid' },
+            h('label', { class: 'field full', for: 'f-type' }, h('span', null, 'Leave type'), typeSel),
+            h('label', { class: 'field', for: 'f-start' }, h('span', null, 'From'), start),
+            h('label', { class: 'field', for: 'f-end' }, h('span', null, 'To'), end),
+            h('label', { class: 'check full', for: 'f-half' }, half, canHalf() ? 'Half day' : 'Half day (not allowed for this type)'),
+            h('label', { class: 'field full', for: 'f-reason' }, h('span', null, 'Reason'), reason)),
+          h('div', { class: 'row' }, submit,
+            h('button', { class: 'btn', type: 'button', onClick: () => { draft = null; actions.navigate('overview'); } }, 'Cancel'))),
+        h('section', { class: 'stack' }, SectionTitle('Before you send'), previewBox));
+    },
+  };
+})(window.LD);
+</script>

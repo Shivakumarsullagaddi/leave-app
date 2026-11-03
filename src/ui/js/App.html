@@ -1,0 +1,124 @@
+<script>
+/**
+ * App — wires everything together: loads data, draws the frame (test bar,
+ * top bar, nav), renders the current view, and exposes `actions` to views.
+ * Views only talk to the server through these actions.
+ */
+(function (LD) {
+  const { h, mount, fmt, toast } = LD.dom;
+  const { Notice, EmptyState } = LD.ui;
+  const store = LD.store;
+  const root = document.getElementById('app');
+
+  const NAV = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'apply', label: 'Apply' },
+    { key: 'requests', label: 'My requests' },
+    { key: 'approvals', label: 'Approvals', approverOnly: true },
+  ];
+  const isApprover = (data) => data.me.role_level !== 'EMPLOYEE' || data.inbox.waiting.length > 0 || data.inbox.decided.length > 0;
+
+  async function load() {
+    try {
+      store.set({ data: await LD.api.bootstrap(), status: 'ready', error: '' });
+    } catch (e) {
+      store.set({ status: 'error', error: e.message });
+    }
+  }
+
+  /** Runs a server change, then reloads so every view shows fresh numbers. */
+  async function change(promise) {
+    const result = await promise;
+    await load();
+    return result;
+  }
+
+  const actions = {
+    navigate(view, focusReq) { store.set({ view: view, focusReq: focusReq || '' }); window.scrollTo(0, 0); },
+    rerender() { render(store.get()); },
+    submit: (input) => change(LD.api.submit(input)),
+    cancel: (reqId) => change(LD.api.cancel(reqId)),
+    decide: (reqId, decision, comment) => change(LD.api.decide(reqId, decision, comment)),
+    async viewAs(empId) { await LD.api.setViewAs(empId); store.set({ view: 'overview', focusReq: '' }); await load(); },
+    async signOut() { await LD.api.signOut().catch(() => {}); store.set({ status: 'loading' }); await load(); },
+  };
+
+  function testBar(data) {
+    if (!data.identity.isAdmin || !data.identity.testMode) return null;
+    const groups = { CSUITE: 'C-suite', LEAD: 'Team leads', EMPLOYEE: 'Employees' };
+    const select = h('select', { id: 'view-as', 'aria-label': 'View as' },
+      h('option', { value: '' }, 'Myself (' + data.identity.email + ')'),
+      Object.keys(groups).map((role) => h('optgroup', { label: groups[role] },
+        data.people.filter((p) => p.role_level === role).map((p) =>
+          h('option', { value: p.emp_id, selected: data.identity.viewingAs && data.me && data.me.emp_id === p.emp_id }, p.name + ' · ' + (p.team_name || ''))))));
+    select.addEventListener('change', () => actions.viewAs(select.value).catch((e) => toast(e.message, 'bad')));
+    return h('div', { class: 'testbar' }, h('div', { class: 'shell' },
+      h('b', null, 'Test mode'), h('span', null, 'View as'), select,
+      data.identity.viewingAs ? h('span', null, 'Actions are saved as ' + data.me.name + '.') : null));
+  }
+
+  function topBar(data, state) {
+    const items = NAV.filter((n) => !n.approverOnly || (data.me && isApprover(data)));
+    return h('header', { class: 'topbar' }, h('div', { class: 'shell' },
+      h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, 'LD'), data.appName),
+      data.me ? h('nav', { class: 'nav', 'aria-label': 'Main' }, items.map((n) =>
+        h('button', { type: 'button', 'aria-current': state.view === n.key ? 'page' : null, onClick: () => actions.navigate(n.key) },
+          n.label, n.key === 'approvals' && data.inbox.waiting.length ? h('span', { class: 'count' }, data.inbox.waiting.length) : null))) : h('span', { style: { flex: 1 } }),
+      data.me ? h('div', { class: 'me' }, h('b', null, data.me.name), h('span', { class: 'muted' }, fmt.role(data.me.role_level) + ' · ' + data.me.team_name)) : null,
+      data.auth.enabled && data.auth.signedIn ? h('button', { class: 'btn small', type: 'button', onClick: actions.signOut, title: data.identity.email }, 'Sign out') : null));
+  }
+
+  /** Google sign-in screen. The link opens Google in the whole tab, then returns here. */
+  function signIn(data) {
+    return h('div', { class: 'signin' },
+      h('div', { class: 'card signin-card' },
+        h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, 'LD'), data.appName),
+        h('h1', null, 'Sign in to apply for and approve leave'),
+        h('p', { class: 'muted' }, 'Use the Google account your admin added to ' + (data.orgName || 'Leave Desk') + '.'),
+        LD.boot.authError ? Notice('bad', 'Sign-in did not work', LD.boot.authError) : null,
+        h('a', { class: 'btn google', href: data.loginUrl, target: '_top' },
+          h('span', { class: 'g-mark', 'aria-hidden': 'true' }, 'G'), 'Sign in with Google'),
+        h('p', { class: 'small muted' }, 'Leave Desk only reads your name and email address.')));
+  }
+
+  function notRegistered(data) {
+    return h('div', { class: 'card', style: { maxWidth: '560px', margin: '40px auto' } },
+      EmptyState('You are not set up in Leave Desk yet',
+        (data.identity.email || 'This account') + ' is not in the Employees list. Ask the admin to add you.'),
+      data.identity.email ? null : (data.auth.enabled
+        ? Notice('info', 'No Google account detected', 'Sign in again with your Google account.')
+        : Notice('warn', 'Google sign-in is not switched on yet',
+          'The admin needs to add OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET in Apps Script → Project Settings → Script Properties. Then this page shows "Sign in with Google".')),
+      data.auth.enabled && data.auth.signedIn
+        ? h('div', { class: 'row', style: { justifyContent: 'center' } }, h('button', { class: 'btn', type: 'button', onClick: actions.signOut }, 'Use another account'))
+        : null);
+  }
+
+  function render(state) {
+    if (state.status === 'loading') return mount(root, h('div', { class: 'boot' }, 'Loading Leave Desk…'));
+    if (state.status === 'error') {
+      return mount(root, h('div', { class: 'shell' }, h('div', { class: 'card', style: { maxWidth: '560px', margin: '40px auto' } },
+        Notice('bad', 'Leave Desk could not load', state.error),
+        h('button', { class: 'btn primary', type: 'button', onClick: () => { store.set({ status: 'loading' }); load(); } }, 'Try again'))));
+    }
+    const data = state.data;
+    if (data.loginUrl) { document.title = 'Sign in · ' + data.appName; return mount(root, signIn(data)); }
+    const view = LD.views[state.view] || LD.views.overview;
+    const page = data.me ? view.render(data, actions, state) : notRegistered(data);
+    mount(root, h('div', null, testBar(data), topBar(data, state), h('main', { class: 'shell' }, page)));
+    document.title = (data.me ? view.title + ' · ' : '') + data.appName;
+    if (state.focusReq) {
+      const el = document.getElementById('req-' + state.focusReq);
+      if (el) el.scrollIntoView({ block: 'center' });
+    }
+  }
+
+  // After Google sign-in, remove ?code=&state= from the address bar.
+  if (LD.boot.cleanUrl) { try { google.script.history.replace(null, {}); } catch (e) { /* not available */ } }
+  window.addEventListener('ld:signed-out', () => { store.set({ status: 'loading' }); load(); });
+
+  store.subscribe(render);
+  render(store.get());
+  load();
+})(window.LD);
+</script>

@@ -1,0 +1,41 @@
+<script>
+/**
+ * Api — the browser's only door to the server.
+ * Wraps google.script.run in Promises, unwraps { ok, data, error }, and sends the
+ * sign-in session with every call. Views never call google.script.run directly.
+ */
+(function (LD) {
+  const KEY = 'leaveDesk.session';
+  const storage = {
+    read() { try { return window.localStorage.getItem(KEY) || ''; } catch (e) { return ''; } },
+    write(v) { try { v ? window.localStorage.setItem(KEY, v) : window.localStorage.removeItem(KEY); } catch (e) { /* private mode */ } },
+  };
+  let session = LD.boot.session || storage.read();
+  if (LD.boot.session) storage.write(LD.boot.session);
+
+  function call(fn, ...args) {
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler((res) => {
+          if (res && res.ok) return resolve(res.data);
+          if (res && res.code === 'UNAUTHENTICATED') { setSession(''); window.dispatchEvent(new Event('ld:signed-out')); }
+          reject(new Error(res ? res.error : 'No response from server.'));
+        })
+        .withFailureHandler((err) => reject(new Error((err && err.message) || 'Could not reach Leave Desk. Check your connection.')))
+        [fn](session, ...args);
+    });
+  }
+
+  function setSession(value) { session = value || ''; storage.write(session); }
+
+  LD.api = {
+    bootstrap: () => call('apiBootstrap', { view: LD.store ? LD.store.get().view : LD.boot.view, req: LD.boot.req || '' }),
+    preview:   (input) => call('apiPreview', input),
+    submit:    (input) => call('apiSubmit', input),
+    cancel:    (reqId) => call('apiCancel', reqId),
+    decide:    (reqId, decision, comment) => call('apiDecide', reqId, decision, comment),
+    setViewAs: (empId) => call('apiSetViewAs', empId),
+    signOut:   () => call('apiSignOut').finally(() => setSession('')),
+  };
+})(window.LD);
+</script>

@@ -1,0 +1,10 @@
+{
+  "name": "leave-desk",
+  "private": true,
+  "description": "Darukaa Leave Desk: leave management on Google Sheets + Apps Script",
+  "scripts": {
+    "test": "node test/flow.test.js && node test/auth.test.js",
+    "screens": "node test/render.js",
+    "push": "clasp push"
+  }
+}

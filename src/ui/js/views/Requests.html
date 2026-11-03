@@ -1,0 +1,38 @@
+<script>
+/** My requests — full history with each approver's decision; pending ones can be cancelled. */
+(function (LD) {
+  const { h, toast } = LD.dom;
+  const { RequestCard, EmptyState, ActionButton } = LD.ui;
+  const FILTERS = [['all', 'All'], ['PENDING', 'Pending'], ['APPROVED', 'Approved'], ['REJECTED', 'Rejected'], ['CANCELLED', 'Cancelled']];
+  let filter = 'all';
+
+  /** Two-step cancel inside the card (the page can't use confirm()). */
+  function cancelFooter(r, actions) {
+    const box = h('div', { class: 'row' });
+    const ask = () => box.replaceChildren(
+      h('span', { class: 'small' }, 'Cancel this request? The days go back to your balance.'),
+      ActionButton('Yes, cancel', 'danger small', async () => { await actions.cancel(r.req_id); toast('Request cancelled.'); }),
+      h('button', { class: 'btn small', type: 'button', onClick: idle }, 'Keep it'));
+    const idle = () => box.replaceChildren(h('button', { class: 'btn danger small', type: 'button', onClick: ask }, 'Cancel request'));
+    idle();
+    return box;
+  }
+
+  LD.views.requests = {
+    title: 'My requests',
+    render(data, actions, state) {
+      const list = data.requests.filter((r) => filter === 'all' || r.status === filter);
+      const seg = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter by status' },
+        FILTERS.map(([key, label]) => h('button', { type: 'button', 'aria-pressed': String(filter === key),
+          onClick: () => { filter = key; actions.rerender(); } }, label)));
+
+      return h('div', { class: 'stack' },
+        h('div', { class: 'page-head' }, h('h1', null, 'My requests'), seg),
+        list.length
+          ? list.map((r) => RequestCard(r, { highlight: r.req_id === state.focusReq, footer: r.status === 'PENDING' ? cancelFooter(r, actions) : null }))
+          : h('div', { class: 'card' }, EmptyState('No requests here', 'Requests you send will appear in this list.',
+            h('button', { class: 'btn primary', type: 'button', onClick: () => actions.navigate('apply') }, 'Apply for leave'))));
+    },
+  };
+})(window.LD);
+</script>

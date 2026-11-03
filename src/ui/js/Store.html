@@ -1,0 +1,22 @@
+<script>
+/**
+ * Store — single source of truth for the page.
+ * set() merges a patch and tells subscribers; views read with get().
+ */
+(function (LD) {
+  let state = { status: 'loading', view: LD.boot.view || 'overview', focusReq: LD.boot.req || '', data: null, error: '' };
+  const listeners = new Set();
+
+  LD.store = {
+    get: () => state,
+    set(patch) {
+      state = Object.assign({}, state, patch);
+      listeners.forEach((fn) => fn(state));
+    },
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+  };
+})(window.LD);
+</script>

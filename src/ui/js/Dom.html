@@ -1,0 +1,68 @@
+<script>
+/**
+ * Dom — tiny view helpers shared by every view.
+ *   h(tag, props, ...children)  builds elements; text is always escaped (no innerHTML)
+ *   fmt.*                       dates, day counts
+ *   toast(msg, tone)            short confirmation / error
+ */
+(function (LD) {
+  const PROPS = ['value', 'checked', 'disabled', 'selected', 'min', 'max'];
+
+  function h(tag, props, ...children) {
+    const el = document.createElement(tag);
+    Object.entries(props || {}).forEach(([key, val]) => {
+      if (val === null || val === undefined || val === false) return;
+      if (key === 'class') el.className = val;
+      else if (key === 'style' && typeof val === 'object') Object.assign(el.style, val);
+      else if (key.startsWith('on') && typeof val === 'function') el.addEventListener(key.slice(2).toLowerCase(), val);
+      else if (PROPS.includes(key)) el[key] = val;
+      else el.setAttribute(key, val === true ? '' : val);
+    });
+    append(el, children);
+    return el;
+  }
+
+  function append(el, children) {
+    children.flat(Infinity).forEach((child) => {
+      if (child === null || child === undefined || child === false) return;
+      el.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+    });
+    return el;
+  }
+
+  function mount(target, node) {
+    target.replaceChildren(node);
+    return node;
+  }
+
+  const asDate = (iso) => new Date(iso + 'T00:00:00Z');
+  const num = (n) => (Math.round(Number(n) * 10) / 10).toString();
+  const fmt = {
+    num,
+    date: (iso) => (iso ? asDate(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) : ''),
+    range: (a, b) => (a === b ? fmt.date(a) : fmt.date(a) + ' – ' + fmt.date(b)),
+    days: (n, half) => (half ? 'Half day' : num(n) + (Number(n) === 1 ? ' day' : ' days')),
+    when: (dt) => {
+      if (!dt) return '';
+      const [d, t] = dt.split(' ');
+      return asDate(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) + (t ? ', ' + t : '');
+    },
+    role: (r) => ({ TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', SYSTEM: 'Auto', LEAD: 'Team Lead', EMPLOYEE: 'Employee' }[r] || r),
+    type: (t) => ({ FT: 'Full-time', INT: 'Intern', CON: 'Contractor' }[t] || t),
+  };
+
+  let toastBox = null;
+  function toast(message, tone) {
+    if (!toastBox) toastBox = document.body.appendChild(h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' }));
+    const node = toastBox.appendChild(h('div', { class: 'toast ' + (tone || '') }, message));
+    setTimeout(() => node.remove(), tone === 'bad' ? 6000 : 3500);
+  }
+
+  function debounce(fn, ms) {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  }
+
+  LD.dom = { h, append, mount, fmt, toast, debounce };
+})(window.LD);
+</script>

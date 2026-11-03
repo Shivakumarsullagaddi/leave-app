@@ -1,0 +1,41 @@
+<script>
+/** Overview — balances, what's waiting, upcoming leave and holidays. */
+(function (LD) {
+  const { h, fmt } = LD.dom;
+  const { BalanceCard, RequestCard, EmptyState, SectionTitle, Notice } = LD.ui;
+
+  LD.views.overview = {
+    title: 'Overview',
+    render(data, actions) {
+      const pending = data.requests.filter((r) => r.status === 'PENDING');
+      const upcoming = data.requests.filter((r) => r.status === 'APPROVED' && r.end_date >= data.today)
+        .sort((a, b) => (a.start_date < b.start_date ? -1 : 1));
+      const holidays = data.holidays.filter((x) => x.date >= data.today).slice(0, 4);
+      const waiting = data.inbox.waiting.length;
+
+      return h('div', { class: 'stack', style: { gap: '22px' } },
+        h('div', { class: 'page-head' },
+          h('div', null, h('h1', null, 'Hi, ' + data.me.name), h('p', { class: 'muted' }, data.me.team_name + ' · ' + fmt.type(data.me.emp_type))),
+          h('button', { class: 'btn primary', type: 'button', onClick: () => actions.navigate('apply') }, 'Apply for leave')),
+
+        waiting ? h('button', { class: 'notice info', type: 'button', style: { textAlign: 'left', border: 0, cursor: 'pointer' }, onClick: () => actions.navigate('approvals') },
+          h('b', null, waiting + (waiting === 1 ? ' request is' : ' requests are') + ' waiting for your approval'),
+          h('span', null, 'Open Approvals →')) : null,
+
+        h('div', { class: 'grid' }, data.balances.map(BalanceCard)),
+
+        h('div', { class: 'two-col' },
+          h('section', { class: 'stack' },
+            SectionTitle('Waiting for approval'),
+            pending.length ? pending.map((r) => RequestCard(r)) : h('div', { class: 'card' }, EmptyState('Nothing pending', 'Requests you send show here until someone approves them.'))),
+          h('section', { class: 'stack' },
+            SectionTitle('Upcoming leave'),
+            upcoming.length ? upcoming.slice(0, 4).map((r) => RequestCard(r)) : h('div', { class: 'card' }, EmptyState('No leave booked', 'Approved leave shows here.')),
+            SectionTitle('Next holidays'),
+            h('div', { class: 'card' }, holidays.length
+              ? h('div', { class: 'trail' }, holidays.map((x) => h('div', { class: 'row spread' }, h('span', null, x.name), h('span', { class: 'muted' }, fmt.date(x.date)))))
+              : Notice('info', null, 'No more holidays this year.')))));
+    },
+  };
+})(window.LD);
+</script>

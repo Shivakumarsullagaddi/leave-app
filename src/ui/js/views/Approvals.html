@@ -1,0 +1,52 @@
+<script>
+/**
+ * Approvals — requests waiting for me (Team Lead / C-suite), with Approve / Reject.
+ * Shows the requester's balance and what other approvers already decided.
+ */
+(function (LD) {
+  const { h, fmt, toast } = LD.dom;
+  const { RequestCard, EmptyState, ActionButton, Notice } = LD.ui;
+  let tab = 'waiting';
+
+  function decisionFooter(r, actions) {
+    const id = 'c-' + r.req_id;
+    const comment = h('input', { class: 'input', id, placeholder: 'Comment (needed to reject)', maxlength: '500' });
+    const b = r.requester_balance;
+    return h('div', { class: 'stack' },
+      r.status === 'APPROVED' ? Notice('good', 'Already approved by ' + r.final_by_name,
+        'You can add your approval for the record, or reject it until the leave starts.') : null,
+      b ? h('p', { class: 'small muted' }, r.employee.name + ' has ' + fmt.num(b.available) + ' ' + r.type_name + ' day(s) left after pending requests.') : null,
+      h('label', { class: 'field', for: id }, h('span', null, 'Your comment'), comment),
+      h('div', { class: 'row' },
+        ActionButton('Approve', 'good', async () => {
+          await actions.decide(r.req_id, 'APPROVED', comment.value);
+          toast('Approved. ' + r.employee.name + ' has been told.');
+        }),
+        ActionButton('Reject', 'danger', async () => {
+          if (!comment.value.trim()) { comment.focus(); throw new Error('Add a short reason before rejecting.'); }
+          await actions.decide(r.req_id, 'REJECTED', comment.value);
+          toast('Rejected. ' + r.employee.name + ' has been told.');
+        })));
+  }
+
+  LD.views.approvals = {
+    title: 'Approvals',
+    render(data, actions, state) {
+      const { waiting, decided } = data.inbox;
+      const list = tab === 'waiting' ? waiting : decided;
+      const seg = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Approvals filter' },
+        [['waiting', 'Waiting (' + waiting.length + ')'], ['decided', 'Decided by me']].map(([key, label]) =>
+          h('button', { type: 'button', 'aria-pressed': String(tab === key), onClick: () => { tab = key; actions.rerender(); } }, label)));
+
+      return h('div', { class: 'stack' },
+        h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Approvals'),
+          h('p', { class: 'muted' }, 'You and the other approver are asked at the same time. The first approval approves; any rejection rejects.')), seg),
+        list.length
+          ? list.map((r) => RequestCard(r, { showEmployee: true, highlight: r.req_id === state.focusReq, footer: tab === 'waiting' ? decisionFooter(r, actions) : null }))
+          : h('div', { class: 'card' }, tab === 'waiting'
+            ? EmptyState('All caught up', 'New requests from your team will show up here and in Slack.')
+            : EmptyState('No decisions yet', 'Requests you approve or reject are listed here.')));
+    },
+  };
+})(window.LD);
+</script>
