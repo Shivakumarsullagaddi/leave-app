@@ -62,7 +62,7 @@ function buildSeed_(nowStr) {
     ['E018', 'Priyanka', 'priyanka', 'EMPLOYEE', 'INT', 'T-SCI', 'E005', '2026-11-01', '2027-01-31', 3],
   ];
   const policyFor = { FT: 'P-FT', INT: 'P-INT', CON: 'P-CON' };
-  testPeople_().forEach((t) => people.push([t.emp_id, t.name, '', t.role_level, 'FT', t.team_id, t.manager_id, t.join_date, '', '']));
+  testPeople_().forEach((t) => people.push([t.emp_id, t.name, '', t.role_level, t.emp_type, t.team_id, t.manager_id, t.join_date, t.end_date, t.contract_months]));
   const testEmail = {};
   LD_CONFIG.TEST_ACCOUNTS.forEach((t) => { testEmail[t.emp_id] = t.email; });
   const employees = people.map(function (p) {
@@ -235,14 +235,20 @@ function roundTo_(value, step) {
   return Math.round(value / step) * step;
 }
 
-/** The three test accounts as Employees rows (team, manager, join date filled in). */
+/** The prototype personas as Employees rows (team, manager, type and dates filled in). */
 function testPeople_() {
   const team = LD_CONFIG.TEST_TEAM.team_id;
   const managerOf = { CSUITE: '', LEAD: testCxo_(), EMPLOYEE: testLead_() };
-  return LD_CONFIG.TEST_ACCOUNTS.map((t) => Object.assign({}, t, {
-    team_id: team, manager_id: managerOf[t.role_level], join_date: LD_CONFIG.SEED_YEAR + '-01-01',
-  }));
+  const policyOf = { FT: 'P-FT', INT: 'P-INT', CON: 'P-CON' };
+  return LD_CONFIG.TEST_ACCOUNTS.map((t) => {
+    const empType = t.emp_type || 'FT';
+    return Object.assign({}, t, {
+      emp_type: empType, policy_id: policyOf[empType],
+      team_id: t.team_id || team, manager_id: t.admin ? '' : managerOf[t.role_level],
+      join_date: t.join_date || LD_CONFIG.SEED_YEAR + '-01-01', end_date: t.end_date || '', contract_months: t.contract_months || '',
+    });
+  });
 }
 
-const testCxo_ = () => LD_CONFIG.TEST_ACCOUNTS.find((t) => t.role_level === 'CSUITE').emp_id;
+const testCxo_ = () => LD_CONFIG.TEST_ACCOUNTS.find((t) => t.role_level === 'CSUITE' && !t.admin).emp_id;
 const testLead_ = () => LD_CONFIG.TEST_ACCOUNTS.find((t) => t.role_level === 'LEAD').emp_id;

@@ -20,14 +20,18 @@ const LD_CONFIG = {
   HEADER_FG: '#FFFFFF',
   PROTECT_TAG: 'LeaveDesk: managed by the app',
 
-  // Test accounts: a separate "Test Team" so the dummy org data stays untouched.
-  //   Test Employee → Test Lead + Test CXO (in parallel); Test Lead → Test CXO; Test CXO → auto.
-  // Created by the seed and by setupTestTeam(). Remove before go-live.
+  // Prototype personas. The entrance screen shows one button per persona (no passwords).
+  //   Employee/Intern → Test Lead + Test CXO (parallel); Test Lead → Test CXO; CXO and Admin → auto.
+  // Created by setupDemo() (and the seed). Remove before go-live.
   TEST_TEAM: { team_id: 'T-TEST', team_name: 'Test Team' },
   TEST_ACCOUNTS: [
-    { emp_id: 'E901', name: 'Test CXO',      role_level: 'CSUITE',   email: 'shivakumarullagaddi855@gmail.com' },
-    { emp_id: 'E902', name: 'Test Lead',     role_level: 'LEAD',     email: 'shivakumarullagaddi56@gmail.com' },
-    { emp_id: 'E903', name: 'Test Employee', role_level: 'EMPLOYEE', email: 'shivakumar.u@darukaa.com' },
+    { persona: 'EMPLOYEE', label: 'Employee',  emp_id: 'E903', name: 'Test Employee', role_level: 'EMPLOYEE', email: 'shivakumar.u@darukaa.com' },
+    { persona: 'INTERN',   label: 'Intern',    emp_id: 'E904', name: 'Test Intern',   role_level: 'EMPLOYEE', email: 'test.intern@leavedesk.test',
+      emp_type: 'INT', join_date: '2026-09-01', end_date: '2027-02-28', contract_months: 6 },
+    { persona: 'LEAD',     label: 'Team Lead', emp_id: 'E902', name: 'Test Lead',     role_level: 'LEAD',     email: 'shivakumarullagaddi56@gmail.com' },
+    { persona: 'CXO',      label: 'CXO',       emp_id: 'E901', name: 'Test CXO',      role_level: 'CSUITE',   email: 'shivakumarullagaddi855@gmail.com' },
+    { persona: 'ADMIN',    label: 'Admin',     emp_id: 'E900', name: 'Leave Admin',   role_level: 'CSUITE',   email: 'admin@leavedesk.test',
+      admin: true, team_id: 'T-CXO' },
   ],
 };
 

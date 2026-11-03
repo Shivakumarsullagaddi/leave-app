@@ -15,14 +15,18 @@ function apiBootstrap(session, returnTo) {
       appName: Config.get('APP_NAME', 'Leave Desk'),
       orgName: Config.get('ORG_NAME', ''),
       today: DateUtil.today(),
-      auth: { enabled: Auth.isEnabled(), signedIn: !!who.email },
+      auth: { enabled: Auth.isEnabled(), mode: Auth.mode(), signedIn: !!who.email },
       identity: { email: who.email, isAdmin: who.isAdmin, testMode: who.testMode, viewingAs: who.viewingAs },
       me: who.employee,
     };
-    if (Auth.isEnabled() && !who.email) return Object.assign(base, { loginUrl: Auth.loginUrl(returnTo) });
+    if (Auth.isEnabled() && !who.email) {
+      return Object.assign(base, { needsLogin: true },
+        Auth.mode() === 'picker' ? { personas: Auth.personas() } : { loginUrl: Auth.loginUrl(returnTo) });
+    }
     if (!who.employee) return base;
     const year = DateUtil.year(DateUtil.today());
     return Object.assign(base, {
+      isAdmin: who.isAdmin,
       people: who.isAdmin && who.testMode ? Directory.activeEmployees().map(Directory.profile) : [],
       leaveTypes: Catalog.leaveTypes().map((t) => ({ type_id: t.type_id, name: t.name, code: t.code, color: t.color, half_day_allowed: t.half_day_allowed })),
       halfDayAllowed: Config.bool('HALF_DAY_ALLOWED'),
@@ -52,6 +56,19 @@ function apiDecide(session, reqId, decision, comment) {
 
 function apiSetViewAs(session, empId) {
   return respond_(() => { Identity.setViewAs(session, empId); return true; });
+}
+
+/** Prototype entrance: open a session as one persona (Employee, Intern, Team Lead, CXO, Admin). */
+function apiPick(_noSession, persona) {
+  return respond_(() => Auth.pick(persona));
+}
+
+/** Admin dashboard: org-wide numbers, requests and balances. Admins only. */
+function apiAdminOverview(session) {
+  return respond_(() => {
+    if (!Identity.current(session).isAdmin) throw Errors.forbidden('Only admins can open the admin dashboard.');
+    return AdminService.overview();
+  });
 }
 
 function apiSignOut(session) {

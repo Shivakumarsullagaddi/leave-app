@@ -1,0 +1,80 @@
+<script>
+/**
+ * Admin — org-wide dashboard: key numbers, who is on leave today, every request
+ * (filter by status), and every person's balance. Read-only.
+ */
+(function (LD) {
+  const { h, fmt } = LD.dom;
+  const { RequestCard, EmptyState, Notice, SectionTitle } = LD.ui;
+  const state = { data: null, loading: false, error: '', tab: 'requests', status: 'PENDING' };
+
+  async function fetchData(actions) {
+    state.loading = true; state.error = '';
+    try { state.data = await LD.api.adminOverview(); } catch (e) { state.error = e.message; }
+    state.loading = false;
+    actions.rerender();
+  }
+
+  const tile = (value, label, tone) => h('div', { class: 'tile ' + (tone || '') }, h('b', null, fmt.num(value)), h('span', null, label));
+
+  function segmented(options, current, onPick, label) {
+    return h('div', { class: 'segmented', role: 'group', 'aria-label': label },
+      options.map(([key, text]) => h('button', { type: 'button', 'aria-pressed': String(current === key), onClick: () => onPick(key) }, text)));
+  }
+
+  function requestsPanel(d, actions) {
+    const counts = {};
+    d.requests.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+    const list = d.requests.filter((r) => state.status === 'ALL' || r.status === state.status);
+    return h('div', { class: 'stack' },
+      segmented([['PENDING', 'Pending (' + (counts.PENDING || 0) + ')'], ['APPROVED', 'Approved'], ['REJECTED', 'Rejected'], ['CANCELLED', 'Cancelled'], ['ALL', 'All']],
+        state.status, (k) => { state.status = k; actions.rerender(); }, 'Filter requests'),
+      list.length ? list.map((r) => RequestCard(r, { showEmployee: true })) : h('div', { class: 'card' }, EmptyState('No requests here', null)));
+  }
+
+  function balancesPanel(d) {
+    const types = d.leaveTypes;
+    return h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null,
+        h('th', null, 'Name'), h('th', null, 'Team'), h('th', null, 'Role'), h('th', null, 'Type'),
+        types.map((t) => h('th', { class: 'num' }, t.code + ' left / credited')),
+        h('th', { class: 'num' }, 'Pending'), h('th', { class: 'num' }, 'LOP days'))),
+      h('tbody', null, d.balances.map((p) => {
+        const by = {};
+        p.balances.forEach((b) => { by[b.type_id] = b; });
+        const pending = p.balances.reduce((t, b) => t + b.pending, 0);
+        return h('tr', null,
+          h('td', null, h('b', null, p.name)), h('td', null, p.team_name), h('td', null, fmt.role(p.role_level === 'CSUITE' ? 'CSUITE' : p.role_level)),
+          h('td', null, fmt.type(p.emp_type)),
+          types.map((t) => { const b = by[t.type_id] || { available: 0, credited: 0 }; return h('td', { class: 'num' }, fmt.num(b.available) + ' / ' + fmt.num(b.credited)); }),
+          h('td', { class: 'num' }, fmt.num(pending)), h('td', { class: 'num' }, fmt.num(p.lop_days)));
+      }))));
+  }
+
+  LD.views.admin = {
+    title: 'Admin',
+    reset() { state.data = null; state.error = ''; },
+    render(data, actions) {
+      if (!state.data && !state.loading && !state.error) fetchData(actions);
+      const head = h('div', { class: 'page-head' },
+        h('div', null, h('h1', null, 'Admin dashboard'), h('p', { class: 'muted' }, 'Everyone\'s leave at a glance' + (state.data ? ' · ' + state.data.year : ''))),
+        h('button', { class: 'btn', type: 'button', disabled: state.loading, onClick: () => fetchData(actions) }, state.loading ? 'Loading…' : 'Refresh'));
+      if (state.error) return h('div', { class: 'stack' }, head, Notice('bad', 'Could not load the dashboard', state.error));
+      if (!state.data) return h('div', { class: 'stack' }, head, h('div', { class: 'card' }, EmptyState('Loading…', null)));
+
+      const d = state.data, s = d.stats;
+      return h('div', { class: 'stack', style: { gap: '20px' } }, head,
+        h('div', { class: 'tiles' },
+          tile(s.people, 'People'), tile(s.pending, 'Waiting for approval', s.pending ? 'warn' : ''),
+          tile(s.approved, 'Approved this year', 'good'), tile(s.rejected, 'Rejected', s.rejected ? 'bad' : ''),
+          tile(s.daysTaken, 'Days taken'), tile(s.lopDays, 'Loss of Pay days', s.lopDays ? 'warn' : ''), tile(s.onLeaveToday, 'On leave today')),
+        h('section', { class: 'card' }, SectionTitle('On leave today'),
+          d.onLeaveToday.length
+            ? h('div', { class: 'trail' }, d.onLeaveToday.map((x) => h('div', { class: 'row spread' }, h('b', null, x.name), h('span', { class: 'muted' }, x.type + ' · until ' + fmt.date(x.until)))))
+            : h('p', { class: 'muted' }, 'Nobody is on leave today.')),
+        segmented([['requests', 'Requests'], ['balances', 'Balances']], state.tab, (k) => { state.tab = k; actions.rerender(); }, 'Admin sections'),
+        state.tab === 'requests' ? requestsPanel(d, actions) : balancesPanel(d));
+    },
+  };
+})(window.LD);
+</script>

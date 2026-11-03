@@ -16,6 +16,7 @@ function onOpen() {
   ui.createMenu('Leave Desk')
     .addItem('Set up database (safe)', 'setupDatabase')
     .addItem('Check database', 'checkDatabase')
+    .addItem('Set up prototype (personas + role picker)', 'setupDemo')
     .addItem('Set up test team', 'setupTestTeam')
     .addItem('Check sign-in setup', 'checkSignIn')
     .addSeparator()
@@ -45,6 +46,24 @@ function checkDatabase() {
  *   Test Employee → Test Lead + Test CXO (parallel) · Test Lead → Test CXO · Test CXO → auto.
  * Any dummy person still holding a test email gets a placeholder email back.
  */
+/**
+ * Prototype setup in one go: personas (Employee, Intern, Team Lead, CXO, Admin),
+ * their balances, ADMIN_EMAILS, and the role-picker entrance (LOGIN_MODE=PICKER).
+ * Safe to re-run.
+ */
+function setupDemo() {
+  const log = Db.transaction(() => {
+    const lines = TestTeam.apply(SetupUi.user());
+    const admins = LD_CONFIG.TEST_ACCOUNTS.filter((t) => t.admin).map((t) => t.email.toLowerCase()).join(',');
+    Db.table('Settings').update('ADMIN_EMAILS', { value: admins });
+    lines.push('ADMIN_EMAILS = ' + admins);
+    PropertiesService.getScriptProperties().setProperty('LOGIN_MODE', 'PICKER');
+    lines.push('Entrance: role picker (' + LD_CONFIG.TEST_ACCOUNTS.map((t) => t.label).join(', ') + ')');
+    return lines;
+  });
+  SetupUi.notify('Prototype ready', log.join('\n'));
+}
+
 function setupTestTeam() {
   const done = Db.transaction(() => TestTeam.apply(SetupUi.user()));
   SetupUi.notify('Test team ready', done.join('\n'));
@@ -89,17 +108,16 @@ const TestTeam = (() => {
       });
     });
 
-    // 2. People first (no team yet), then the team, then link them. The sheet's dropdowns
-    //    only accept ids that already exist, so the order matters. CXO → Lead → Employee
-    //    also makes sure each manager exists before the person who reports to them.
+    // 2. People first (no team, no manager), then the team, then link them. The sheet's
+    //    dropdowns only accept ids that already exist, so the order matters.
     const person = (p, extra) => Object.assign({
-      emp_id: p.emp_id, name: p.name, email: p.email, role_level: p.role_level, emp_type: 'FT',
-      policy_id: 'P-FT', join_date: p.join_date, end_date: '', contract_months: '', slack_user_id: '',
-      status: 'Active', updated_at: now,
+      emp_id: p.emp_id, name: p.name, email: p.email, role_level: p.role_level, emp_type: p.emp_type,
+      policy_id: p.policy_id, join_date: p.join_date, end_date: p.end_date, contract_months: p.contract_months,
+      slack_user_id: '', status: 'Active', updated_at: now,
     }, extra);
     people.forEach((p) => {
       const existing = employees.get(p.emp_id);
-      upsert('Employees', person(p, existing ? {} : { team_id: '', manager_id: p.manager_id, created_at: now }), log, actor);
+      upsert('Employees', person(p, existing ? {} : { team_id: '', manager_id: '', created_at: now }), log, actor);
     });
     const team = LD_CONFIG.TEST_TEAM;
     upsert('Teams', { team_id: team.team_id, team_name: team.team_name, lead_id: testLead_(), csuite_id: testCxo_(),
@@ -109,8 +127,8 @@ const TestTeam = (() => {
     // 3. Balances for this year (only if missing, so test usage is kept).
     const year = DateUtil.year(DateUtil.today());
     const balances = Db.table('LeaveBalances');
-    Db.table('Policies').where((r) => r.policy_id === 'P-FT' && r.active).forEach((rule) => {
-      people.forEach((p) => {
+    people.forEach((p) => {
+      Db.table('Policies').where((r) => r.policy_id === p.policy_id && r.active).forEach((rule) => {
         if (balances.find((b) => b.emp_id === p.emp_id && b.type_id === rule.type_id && Number(b.year) === year)) return;
         const accrued = accruedSoFar(p, Number(rule.yearly_quota));
         balances.insert({ bal_id: balances.nextId('B', 4), emp_id: p.emp_id, year: year, type_id: rule.type_id,
@@ -139,7 +157,15 @@ function checkSignIn() {
   const urlLine = (urlOk ? '✔' : '✘') + ' APP_URL ' + (appUrl || 'empty') +
     (urlOk ? '' : ' → paste the /exec Web app URL (Settings tab or Script Properties)');
   let lines;
-  if (!id && !secret) {
+  if (Auth.mode() === 'picker') {
+    lines = [
+      'Mode: prototype role picker (LOGIN_MODE = PICKER). No passwords.',
+      '• Entrance buttons: ' + LD_CONFIG.TEST_ACCOUNTS.map((t) => t.label + ' → ' + t.name).join(', '),
+      '• Deployment must be: Execute as = Me; Who has access = Anyone. No Sheet sharing needed.',
+      urlLine + (urlOk ? '' : ' (only needed for "Open request" links in emails)'),
+      'Sign-in is ON. Open the /exec URL and pick a role.',
+    ];
+  } else if (!id && !secret) {
     lines = [
       'Mode: Google built-in sign-in (no OAuth keys set).',
       '• Deployment must be: Execute as = User accessing the web app; Who has access = Anyone with Google account.',

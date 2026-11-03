@@ -36,6 +36,8 @@
     decide:    (reqId, decision, comment) => call('apiDecide', reqId, decision, comment),
     setViewAs: (empId) => call('apiSetViewAs', empId),
     signOut:   () => call('apiSignOut').finally(() => setSession('')),
+    pick:      (persona) => call('apiPick', persona).then((res) => { setSession(res.session); return res; }),
+    adminOverview: () => call('apiAdminOverview'),
   };
 })(window.LD);
 </script>

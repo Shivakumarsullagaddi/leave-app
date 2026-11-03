@@ -15,6 +15,7 @@
     { key: 'apply', label: 'Apply' },
     { key: 'requests', label: 'My requests' },
     { key: 'approvals', label: 'Approvals', approverOnly: true },
+    { key: 'admin', label: 'Admin', adminOnly: true },
   ];
   const isApprover = (data) => data.me.role_level !== 'EMPLOYEE' || data.inbox.waiting.length > 0 || data.inbox.decided.length > 0;
 
@@ -34,7 +35,12 @@
   }
 
   const actions = {
-    navigate(view, focusReq) { store.set({ view: view, focusReq: focusReq || '' }); window.scrollTo(0, 0); },
+    navigate(view, focusReq) {
+      const target = LD.views[view];
+      if (target && target.reset) target.reset();     // e.g. Admin reloads fresh numbers
+      store.set({ view: view, focusReq: focusReq || '' });
+      window.scrollTo(0, 0);
+    },
     rerender() { render(store.get()); },
     submit: (input) => change(LD.api.submit(input)),
     cancel: (reqId) => change(LD.api.cancel(reqId)),
@@ -58,21 +64,40 @@
   }
 
   function topBar(data, state) {
-    const items = NAV.filter((n) => !n.approverOnly || (data.me && isApprover(data)));
+    const items = NAV.filter((n) => (!n.approverOnly || (data.me && isApprover(data))) && (!n.adminOnly || data.identity.isAdmin));
     return h('header', { class: 'topbar' }, h('div', { class: 'shell' },
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, 'LD'), data.appName),
       data.me ? h('nav', { class: 'nav', 'aria-label': 'Main' }, items.map((n) =>
         h('button', { type: 'button', 'aria-current': state.view === n.key ? 'page' : null, onClick: () => actions.navigate(n.key) },
           n.label, n.key === 'approvals' && data.inbox.waiting.length ? h('span', { class: 'count' }, data.inbox.waiting.length) : null))) : h('span', { style: { flex: 1 } }),
       data.me ? h('div', { class: 'me' }, h('b', null, data.me.name), h('span', { class: 'muted' }, fmt.role(data.me.role_level) + ' · ' + data.me.team_name)) : null,
-      data.auth.enabled && data.auth.signedIn ? h('button', { class: 'btn small', type: 'button', onClick: actions.signOut, title: data.identity.email }, 'Sign out') : null));
+      data.auth.enabled && data.auth.signedIn ? h('button', { class: 'btn small', type: 'button', onClick: actions.signOut, title: data.identity.email }, data.auth.mode === 'picker' ? 'Switch role' : 'Sign out') : null));
   }
 
-  /** Google sign-in screen. The link opens Google in the whole tab, then returns here. */
+  /** Entrance: role picker (prototype) or "Sign in with Google". */
   function signIn(data) {
+    const brand = h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, 'LD'), data.appName);
+    if (data.personas) {
+      const errorBox = h('div', { 'aria-live': 'polite' });
+      const choose = async (p, btn) => {
+        btn.disabled = true;
+        try { await LD.api.pick(p.persona); store.set({ status: 'loading', view: p.persona === 'ADMIN' ? 'admin' : 'overview', focusReq: '' }); await load(); }
+        catch (e) { errorBox.replaceChildren(Notice('bad', null, e.message)); btn.disabled = false; }
+      };
+      return h('div', { class: 'signin' }, h('div', { class: 'card signin-card wide' }, brand,
+        h('h1', null, 'Choose who you want to be'),
+        h('p', { class: 'muted' }, 'Prototype entrance. Pick a role to open that person\'s dashboard. Use "Switch role" at the top to come back.'),
+        h('div', { class: 'persona-grid' }, data.personas.map((p) => {
+          const btn = h('button', { class: 'persona', type: 'button', disabled: !p.ready },
+            h('span', { class: 'persona-label' }, p.label),
+            h('span', { class: 'persona-who' }, p.ready ? p.name + (p.team ? ' · ' + p.team : '') : 'Not set up yet'));
+          btn.addEventListener('click', () => choose(p, btn));
+          return btn;
+        })),
+        errorBox));
+    }
     return h('div', { class: 'signin' },
-      h('div', { class: 'card signin-card' },
-        h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, 'LD'), data.appName),
+      h('div', { class: 'card signin-card' }, brand,
         h('h1', null, 'Sign in to apply for and approve leave'),
         h('p', { class: 'muted' }, 'Use the Google account your admin added to ' + (data.orgName || 'Leave Desk') + '.'),
         LD.boot.authError ? Notice('bad', 'Sign-in did not work', LD.boot.authError) : null,
@@ -102,7 +127,7 @@
         h('button', { class: 'btn primary', type: 'button', onClick: () => { store.set({ status: 'loading' }); load(); } }, 'Try again'))));
     }
     const data = state.data;
-    if (data.loginUrl) { document.title = 'Sign in · ' + data.appName; return mount(root, signIn(data)); }
+    if (data.needsLogin) { document.title = 'Sign in · ' + data.appName; return mount(root, signIn(data)); }
     const view = LD.views[state.view] || LD.views.overview;
     const page = data.me ? view.render(data, actions, state) : notRegistered(data);
     mount(root, h('div', null, testBar(data), topBar(data, state), h('main', { class: 'shell' }, page)));

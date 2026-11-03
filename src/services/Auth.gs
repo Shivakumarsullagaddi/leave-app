@@ -1,6 +1,13 @@
 /**
- * Auth.gs — "Sign in with Google" for any Google account (OAuth 2.0 authorization-code flow).
+ * Auth.gs — how people get into the app. Three modes:
  *
+ *  PICKER  Script Property LOGIN_MODE=PICKER (prototype). The entrance shows one button
+ *          per persona in LD_CONFIG.TEST_ACCOUNTS; clicking one opens a session as that
+ *          person. No passwords. Set up by setupDemo().
+ *  OAUTH   OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET set: "Sign in with Google" (below).
+ *  GOOGLE  Neither: Google's built-in session (Session.getActiveUser).
+ *
+ * OAuth flow:
  *  1. loginUrl()        → Google sign-in page, with a one-time `state` (CSRF protection).
  *  2. Google redirects back to the web app with ?code=…&state=…
  *  3. handleCallback()  → checks state, swaps the code for an ID token on Google's
@@ -18,7 +25,38 @@ const Auth = (() => {
   const cache = () => CacheService.getScriptCache();
   const prop = (k) => PropertiesService.getScriptProperties().getProperty(k) || '';
   const clientId = () => prop('OAUTH_CLIENT_ID');
-  const isEnabled = () => !!clientId() && !!prop('OAUTH_CLIENT_SECRET');
+
+  /** @returns {'picker'|'oauth'|'google'} */
+  function mode() {
+    if (prop('LOGIN_MODE').toUpperCase() === 'PICKER') return 'picker';
+    if (clientId() && prop('OAUTH_CLIENT_SECRET')) return 'oauth';
+    return 'google';
+  }
+  const isEnabled = () => mode() !== 'google';
+
+  function openSession(email) {
+    const session = randomToken();
+    cache().put('session:' + session, String(email).toLowerCase(), SESSION_SECONDS);
+    return session;
+  }
+
+  /** Prototype entrance buttons: persona key + label + who it is. */
+  function personas() {
+    return LD_CONFIG.TEST_ACCOUNTS.map((t) => {
+      const e = Directory.byEmail(t.email);
+      return { persona: t.persona, label: t.label, name: e ? e.name : t.name,
+        team: e ? (Directory.profile(e).team_name || '') : '', ready: !!e };
+    });
+  }
+
+  /** Opens a session as the persona's employee (picker mode only). */
+  function pick(persona) {
+    if (mode() !== 'picker') throw Errors.forbidden('The role picker is switched off.');
+    const t = LD_CONFIG.TEST_ACCOUNTS.find((a) => a.persona === persona);
+    if (!t) throw Errors.invalid('Unknown role.');
+    if (!Directory.byEmail(t.email)) throw Errors.setup('"' + t.label + '" is not set up yet. Run setupDemo in the Apps Script editor.');
+    return { session: openSession(t.email) };
+  }
   const redirectUri = () => Config.get('APP_URL') || ScriptApp.getService().getUrl();
   const randomToken = () => (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
   const query = (params) => Object.keys(params).map((k) => k + '=' + encodeURIComponent(params[k])).join('&');
@@ -68,9 +106,7 @@ const Auth = (() => {
     validate(claims);
 
     const email = String(claims.email).toLowerCase();
-    const session = randomToken();
-    cache().put('session:' + session, email, SESSION_SECONDS);
-    return { session: session, email: email, returnTo: JSON.parse(saved || '{}') };
+    return { session: openSession(email), email: email, returnTo: JSON.parse(saved || '{}') };
   }
 
   function emailFor(session) {
@@ -82,5 +118,5 @@ const Auth = (() => {
     if (emailFor(session)) cache().remove('session:' + session);
   }
 
-  return { isEnabled, loginUrl, handleCallback, emailFor, logout };
+  return { mode, isEnabled, personas, pick, loginUrl, handleCallback, emailFor, logout };
 })();

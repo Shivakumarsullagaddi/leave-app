@@ -34,10 +34,10 @@ console.log('tabs:', env.book.sheets.map((s) => s.name).join(', '));
 assert.strictEqual(P.props.SPREADSHEET_ID, 'BOOK1');
 run('setupDatabase()'); // re-run is safe
 run('Db.refresh()');
-assert.strictEqual(run("Db.table('Employees').all().length"), 21);
+assert.strictEqual(run("Db.table('Employees').all().length"), 23);
 assert.strictEqual(run("Db.table('LeaveRequests').all().length"), 13);
 assert.ok(run("Config.bool('TEST_MODE')"));
-console.log('✓ setup idempotent: 21 employees (18 + 3 test), 13 requests, TEST_MODE on');
+console.log('✓ setup idempotent: 23 employees (18 + 5 personas), 13 requests, TEST_MODE on');
 
 // From here on behave like the deployed web app (no active spreadsheet).
 env.webapp = true;

@@ -31,7 +31,7 @@ const lead = run("Db.table('Employees').get('E902')");
 assert.strictEqual(lead.team_id, 'T-TEST'); assert.strictEqual(lead.manager_id, 'E901');
 assert.strictEqual(run("Db.table('Employees').get('E903').manager_id"), 'E902');
 assert.strictEqual(run("Db.table('Employees').get('E011').email"), 'shiva@darukaa.com');
-assert.strictEqual(run("Db.table('LeaveBalances').where(b=>/^E90/.test(b.emp_id)).length"), 6);
+assert.strictEqual(run("Db.table('LeaveBalances').where(b=>/^E90/.test(b.emp_id)).length"), 10);
 P.env.webapp = true;
 const pv = run(`apiPreview('', {type_id:'LT-PL',start_date:'2026-11-26',end_date:'2026-11-26'})`).data;
 assert.strictEqual(pv.approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO');
