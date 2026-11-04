@@ -211,4 +211,25 @@ textarea.input { min-height: 84px; resize: vertical; }
 .spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+/* Report download */
+.download-row { display: grid; gap: 12px; grid-template-columns: minmax(150px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) auto; align-items: start; }
+@media (max-width: 720px) { .download-row { grid-template-columns: 1fr 1fr; } .download-row > :first-child, .download-row > :last-child { grid-column: 1 / -1; } }
+.print-area { display: none; }
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  body.printing { background: #fff !important; color: #000 !important; padding: 0 !important; }
+  body.printing > *:not(.print-area) { display: none !important; }
+  body.printing .print-area { display: block; font: 10px/1.4 system-ui, sans-serif; color: #000; }
+  .print-area h1 { font-size: 18px; margin: 2px 0 4px; }
+  .print-area h2 { font-size: 13px; margin: 14px 0 2px; }
+  .print-area p { margin: 0 0 4px; }
+  .print-area .print-brand, .print-area .print-muted { color: #555; }
+  .print-area table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  .print-area th, .print-area td { border: 1px solid #bbb; padding: 3px 5px; text-align: left; vertical-align: top; }
+  .print-area th { background: #eef2f0; }
+  .print-area td.num { text-align: right; }
+  .print-area thead { display: table-header-group; }
+  .print-area tr { break-inside: avoid; }
+}
 </style>

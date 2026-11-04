@@ -39,6 +39,7 @@
     pick:      (persona) => call('apiPick', persona).then((res) => { setSession(res.session); return res; }),
     adminOverview: () => call('apiAdminOverview'),
     report:        (scope, id) => call('apiReport', scope, id),
+    reportExport:  (scope, id, from, to) => call('apiReportExport', scope, id, from, to),
     adminSavePerson:    (input) => call('apiAdminSavePerson', input),
     adminSaveTeam:      (input) => call('apiAdminSaveTeam', input),
     adminAdjustBalance: (empId, typeId, days, reason) => call('apiAdminAdjustBalance', empId, typeId, days, reason),

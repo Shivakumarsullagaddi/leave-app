@@ -175,7 +175,10 @@
   // ------------------------------------------------------------------ tabs
 
   function dashboardTab() {
-    return R().renderGroup(state.data.report, (id) => drill('person', id), (id) => drill('team', id));
+    const r = state.data.report;
+    return h('div', { class: 'stack', style: { gap: '18px' } },
+      R().DownloadPanel({ scope: 'org', id: '', today: r.today }),
+      R().renderGroup(r, (id) => drill('person', id), (id) => drill('team', id)));
   }
 
   function peopleTab() {
@@ -281,6 +284,7 @@
           dr.error ? Notice('bad', 'Could not load the report', dr.error)
             : !dr.data ? h('div', { class: 'card' }, EmptyState('Loading…', null))
             : h('div', { class: 'stack' }, h('h2', null, dr.data.title),
+              R().DownloadPanel({ scope: dr.scope, id: dr.id, today: dr.data.today }),
               dr.scope === 'person' ? R().renderPerson(dr.data) : R().renderGroup(dr.data, (id) => drill('person', id), (id) => drill('team', id))));
       } else {
         body = { dashboard: dashboardTab, people: peopleTab, teams: teamsTab, requests: requestsTab, policies: policiesTab }[state.tab]();

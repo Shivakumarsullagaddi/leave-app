@@ -73,6 +73,15 @@ function apiReport(session, scope, id) {
   });
 }
 
+/** Report download data for a period (from / to as yyyy-MM-dd). Same access rules as apiReport. */
+function apiReportExport(session, scope, id, from, to) {
+  return respond_(() => {
+    const who = Identity.current(session);
+    const me = Identity.requireEmployee(session);
+    return ReportService.exportData(me, who.isAdmin, scope || 'person', id || '', from, to);
+  });
+}
+
 /** Admin endpoints. Every one checks the caller is an admin first. */
 function requireAdmin_(session) {
   const who = Identity.current(session);

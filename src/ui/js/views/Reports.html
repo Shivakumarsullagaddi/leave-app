@@ -119,7 +119,130 @@
       }))));
   }
 
-  LD.reports = { renderPerson, renderGroup, membersTable, teamTable, tile };
+  // ------------------------------------------------------------------ download (CSV for Excel / PDF)
+
+  const PERIODS = [['this-month', 'This month'], ['last-month', 'Last month'], ['this-quarter', 'This quarter'], ['last-quarter', 'Last quarter'],
+    ['this-year', 'This year'], ['last-year', 'Last year'], ['custom', 'Custom dates']];
+  const iso = (y, m, d) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+
+  /** {from, to} for a preset, relative to today ('yyyy-MM-dd'). */
+  function periodRange(key, today) {
+    const y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7)) - 1, q = Math.floor(m / 3);
+    switch (key) {
+      case 'this-month': return { from: iso(y, m, 1), to: iso(y, m + 1, 0) };
+      case 'last-month': return { from: iso(y, m - 1, 1), to: iso(y, m, 0) };
+      case 'this-quarter': return { from: iso(y, q * 3, 1), to: iso(y, q * 3 + 3, 0) };
+      case 'last-quarter': return { from: iso(y, q * 3 - 3, 1), to: iso(y, q * 3, 0) };
+      case 'last-year': return { from: iso(y - 1, 0, 1), to: iso(y - 1, 11, 31) };
+      default: return { from: iso(y, 0, 1), to: iso(y, 11, 31) };
+    }
+  }
+
+  const dl = { period: 'this-year', from: '', to: '' }; // remembered while the app is open
+
+  /** A cell safe for Excel: quoted when needed; text starting with = + - @ can't run as a formula. */
+  function csvCell(v) {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return String(v);
+    let t = String(v);
+    if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+    return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+
+  function toCsv(x) {
+    const line = (cells) => cells.map(csvCell).join(',');
+    const out = [line(['Leave report', x.title]), line(['Period', x.from, x.to]), line(['Generated', x.generatedAt, 'by ' + x.generatedBy]), ''];
+    x.tables.forEach((t) => {
+      out.push(line([t.name]), line([t.note]), line(t.columns.map((c) => c.label)));
+      t.rows.forEach((r) => out.push(line(r)));
+      if (!t.rows.length) out.push(line(['(none)']));
+      out.push('');
+    });
+    return '\uFEFF' + out.join('\r\n'); // BOM so Excel reads UTF-8 names correctly
+  }
+
+  function saveFile(name, text, mime) {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }));
+    const a = h('a', { href: url, download: name, style: { display: 'none' } });
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }
+
+  /** Printable version of the export; the browser's print dialog saves it as PDF. */
+  function printPdf(x) {
+    const old = document.querySelector('.print-area');
+    if (old) old.remove();
+    const area = h('div', { class: 'print-area' },
+      h('header', null,
+        h('p', { class: 'print-brand' }, 'Leave Desk · leave report'),
+        h('h1', null, x.title),
+        h('p', null, 'Period ' + x.from + ' to ' + x.to + ' · ' + x.totals.people + ' people · ' + x.totals.requests + ' requests · '
+          + fmt.num(x.totals.approvedDays) + ' approved leave days'),
+        h('p', { class: 'print-muted' }, 'Generated ' + x.generatedAt + ' by ' + x.generatedBy)),
+      x.tables.map((t) => {
+        const keep = t.columns.map((c, i) => (c.pdf ? i : -1)).filter((i) => i >= 0);
+        return h('section', null, h('h2', null, t.name), h('p', { class: 'print-muted' }, t.note),
+          t.rows.length
+            ? h('table', null, h('thead', null, h('tr', null, keep.map((i) => h('th', null, t.columns[i].label)))),
+                h('tbody', null, t.rows.map((r) => h('tr', null, keep.map((i) => h('td', { class: typeof r[i] === 'number' ? 'num' : '' }, r[i] === '' || r[i] == null ? '—' : String(r[i])))))))
+            : h('p', null, 'None in this period.'));
+      }));
+    document.body.appendChild(area);
+    document.body.classList.add('printing');
+    const title = document.title;
+    document.title = x.filename;
+    const done = () => { document.body.classList.remove('printing'); area.remove(); document.title = title; window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    setTimeout(() => window.print(), 50);
+  }
+
+  /**
+   * "Download report" card.
+   * @param {{scope, id, today}} target   which report (same choices as on screen)
+   */
+  function DownloadPanel(target) {
+    if (!dl.from) Object.assign(dl, periodRange(dl.period, target.today));
+    const status = h('span', { class: 'muted small', 'aria-live': 'polite' });
+    const period = h('select', { class: 'input', id: 'dl-period' }, PERIODS.map(([k, label]) => h('option', { value: k, selected: k === dl.period }, label)));
+    const from = h('input', { class: 'input', id: 'dl-from', type: 'date', value: dl.from, required: true });
+    const to = h('input', { class: 'input', id: 'dl-to', type: 'date', value: dl.to, required: true });
+    period.addEventListener('change', () => {
+      dl.period = period.value;
+      if (dl.period !== 'custom') { Object.assign(dl, periodRange(dl.period, target.today)); from.value = dl.from; to.value = dl.to; }
+      else from.focus();
+    });
+    const custom = () => { dl.period = 'custom'; period.value = 'custom'; dl.from = from.value; dl.to = to.value; };
+    from.addEventListener('change', custom);
+    to.addEventListener('change', custom);
+
+    const fetchData = async () => {
+      if (!from.value || !to.value) throw new Error('Choose both dates.');
+      if (from.value > to.value) throw new Error('"From" must be on or before "To".');
+      status.textContent = 'Preparing…';
+      try { return await LD.api.reportExport(target.scope, target.id || '', from.value, to.value); } finally { status.textContent = ''; }
+    };
+    const csv = LD.ui.ActionButton('Excel (CSV)', 'primary', async () => {
+      const x = await fetchData();
+      saveFile(x.filename + '.csv', toCsv(x), 'text/csv;charset=utf-8');
+      status.textContent = 'Downloaded ' + x.filename + '.csv · ' + x.totals.requests + ' requests';
+    });
+    const pdf = LD.ui.ActionButton('PDF', '', async () => {
+      const x = await fetchData();
+      printPdf(x);
+      status.textContent = 'In the print window choose "Save as PDF".';
+    });
+    const field = (id, label, el) => h('label', { class: 'field', for: id }, h('span', null, label), el);
+    return h('section', { class: 'card stack download-panel', 'aria-label': 'Download report' },
+      h('div', { class: 'row spread' }, h('h3', null, 'Download report'),
+        h('span', { class: 'muted small' }, 'Requests with any day in the period · balances for the leave year of "To"')),
+      h('div', { class: 'download-row' },
+        field('dl-period', 'Period', period), field('dl-from', 'From', from), field('dl-to', 'To', to),
+        h('div', { class: 'field' }, h('span', null, 'Format'), h('div', { class: 'row' }, csv, pdf))),
+      status);
+  }
+
+  LD.reports = { renderPerson, renderGroup, membersTable, teamTable, tile, DownloadPanel, periodRange, toCsv };
 
   // ------------------------------------------------------------------ the Reports page
 
@@ -154,7 +277,9 @@
       let body;
       if (state.error) body = Notice('bad', 'Could not load the report', state.error);
       else if (!state.data) body = h('div', { class: 'card' }, EmptyState('Loading…', null));
-      else body = state.data.scope === 'person' ? renderPerson(state.data, open) : renderGroup(state.data, open, openTeam);
+      else body = h('div', { class: 'stack', style: { gap: '18px' } },
+        DownloadPanel({ scope: state.data.scope, id: state.data.id, today: state.data.today }),
+        state.data.scope === 'person' ? renderPerson(state.data, open) : renderGroup(state.data, open, openTeam));
       return h('div', { class: 'stack', style: { gap: '18px' } }, head, body);
     },
   };

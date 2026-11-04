@@ -211,5 +211,128 @@ const ReportService = (() => {
     return person(empId);
   }
 
-  return { scopesFor, get, org, team, person };
+  // ------------------------------------------------------------------ download (CSV / PDF)
+
+  const MAX_SPAN_DAYS = 731; // two years
+
+  function checkPeriod(from, to) {
+    if (!DateUtil.isValid(from) || !DateUtil.isValid(to)) throw Errors.invalid('Choose a valid From and To date.');
+    if (from > to) throw Errors.invalid('"From" must be on or before "To".');
+    if (DateUtil.addDays(from, MAX_SPAN_DAYS - 1) < to) throw Errors.invalid('A report can cover at most 2 years.');
+  }
+
+  /** Working days of a request that fall between from and to (inclusive). */
+  function daysInPeriod(r, from, to, calendar) {
+    if (!DateUtil.overlaps(r.start_date, r.end_date, from, to)) return 0;
+    if (r.half_day) return r.start_date >= from && r.start_date <= to ? DateUtil.workingDays(r.start_date, r.start_date, Object.assign({}, calendar, { halfDay: true })) : 0;
+    return DateUtil.workingDays(r.start_date < from ? from : r.start_date, r.end_date > to ? to : r.end_date, calendar);
+  }
+
+  /** Same access rules as the on-screen reports. @returns {{title, people}} */
+  function audience(viewer, isAdmin, scope, id) {
+    if (scope === 'org') {
+      if (!isAdmin) throw Errors.forbidden('Only admins can download the organization report.');
+      return { title: Config.get('ORG_NAME', 'Organization'), people: Directory.activeEmployees() };
+    }
+    if (scope === 'team') {
+      if (!teamsVisibleTo(viewer, isAdmin).some((t) => t.team_id === id)) throw Errors.forbidden('You can only download reports for teams you lead or approve for.');
+      const info = teamInfo(id);
+      return { title: info.team_name, people: Directory.activeEmployees().filter((e) => e.team_id === id) };
+    }
+    const empId = id || viewer.emp_id;
+    if (!canSeePerson(viewer, isAdmin, empId)) throw Errors.forbidden('You can only download reports for yourself and your team members.');
+    const e = Directory.employee(empId);
+    if (!e) throw Errors.notFound('Employee ' + empId);
+    return { title: e.name, people: [e] };
+  }
+
+  const ROLE_LABEL = { CSUITE: 'C-suite', LEAD: 'Team Lead', EMPLOYEE: 'Employee' };
+  const TYPE_LABEL = { FT: 'Full-time', INT: 'Intern', CON: 'Contractor' };
+  const STATUS_LABEL = { PENDING: 'Pending', APPROVED: 'Approved', REJECTED: 'Rejected', CANCELLED: 'Cancelled' };
+  const slug = (v) => String(v || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'report';
+
+  /**
+   * Report data for a period, as two tables (Summary, Leave requests).
+   * The browser turns it into a CSV file (opens in Excel / Google Sheets) or a printable PDF.
+   * Requests are included when any of their days fall in the period. Balances are for the
+   * leave year of the "To" date (never later than this year).
+   */
+  function exportData(viewer, isAdmin, scope, id, from, to) {
+    scope = scope || 'person';
+    checkPeriod(from, to);
+    const who = audience(viewer, isAdmin, scope, id);
+    const today = DateUtil.today();
+    const balanceYear = Math.min(DateUtil.year(to), DateUtil.year(today));
+    const calendar = Catalog.calendar();
+    const types = Catalog.leaveTypes().map((t) => ({ type_id: t.type_id, name: t.name, code: t.code }));
+    const people = who.people.slice().sort((a, b) => (a.name < b.name ? -1 : 1));
+    const ids = {};
+    people.forEach((e) => { ids[e.emp_id] = e; });
+    const reqs = Db.table('LeaveRequests')
+      .where((r) => ids[r.emp_id] && DateUtil.overlaps(r.start_date, r.end_date, from, to))
+      .sort((a, b) => (a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : (a.emp_id < b.emp_id ? -1 : 1)));
+    const typeName = (tid) => (Catalog.leaveType(tid) || {}).name || tid;
+    const inPeriod = {};
+    reqs.forEach((r) => { inPeriod[r.req_id] = daysInPeriod(r, from, to, calendar); });
+
+    // Summary: one row per person
+    const col = (key, label, pdf) => ({ key: key, label: label, pdf: !!pdf });
+    const summaryCols = [col('emp_id', 'Employee ID'), col('name', 'Name', true), col('email', 'Email'), col('team', 'Team', scope !== 'person'),
+      col('role', 'Role'), col('type', 'Employment type'), col('approvers', 'Leave approved by', true)];
+    types.forEach((t) => {
+      summaryCols.push(col(t.code + '_credited', t.code + ' credited ' + balanceYear, true), col(t.code + '_used', t.code + ' used ' + balanceYear),
+        col(t.code + '_pending', t.code + ' pending ' + balanceYear), col(t.code + '_left', t.code + ' left ' + balanceYear, true));
+    });
+    summaryCols.push(col('days', 'Approved leave days in period', true), col('lop', 'LOP days (approved requests in period)', true),
+      col('pending', 'Pending requests', true), col('rejected', 'Rejected requests'), col('cancelled', 'Cancelled requests'));
+
+    const summaryRows = people.map((e) => {
+      const row = memberRow(e, balanceYear, []);
+      const mine = reqs.filter((r) => r.emp_id === e.emp_id);
+      const approved = mine.filter((r) => r.status === 'APPROVED');
+      const v = { emp_id: e.emp_id, name: e.name, email: e.email, team: row.team_name, role: ROLE_LABEL[e.role_level] || e.role_level, type: TYPE_LABEL[e.emp_type] || e.emp_type, approvers: row.approvers };
+      types.forEach((t) => {
+        const b = row.balances.find((x) => x.type_id === t.type_id) || {};
+        v[t.code + '_credited'] = round1(n(b.accrued) + n(b.adjusted));
+        v[t.code + '_used'] = round1(n(b.used));
+        v[t.code + '_pending'] = round1(n(b.pending));
+        v[t.code + '_left'] = round1(n(b.available));
+      });
+      v.days = round1(approved.reduce((t, r) => t + inPeriod[r.req_id], 0));
+      v.lop = round1(approved.reduce((t, r) => t + n(r.lop_days), 0));
+      v.pending = mine.filter((r) => r.status === 'PENDING').length;
+      v.rejected = mine.filter((r) => r.status === 'REJECTED').length;
+      v.cancelled = mine.filter((r) => r.status === 'CANCELLED').length;
+      return summaryCols.map((c) => v[c.key]);
+    });
+
+    // Leave requests in the period
+    const reqCols = [col('req_id', 'Request ID'), col('emp_id', 'Employee ID'), col('name', 'Name', true), col('team', 'Team', scope !== 'person'),
+      col('type', 'Leave type', true), col('start', 'Start', true), col('end', 'End', true), col('half', 'Half day'),
+      col('days', 'Working days'), col('in_period', 'Days in period', true), col('paid', 'Paid days'), col('lop', 'LOP days', true),
+      col('status', 'Status', true), col('by', 'Decided by', true), col('at', 'Decided at'), col('submitted', 'Submitted at'), col('reason', 'Reason')];
+    const reqRows = reqs.map((r) => {
+      const e = ids[r.emp_id];
+      const v = { req_id: r.req_id, emp_id: r.emp_id, name: e.name, team: teamInfo(e.team_id).team_name, type: typeName(r.type_id),
+        start: r.start_date, end: r.end_date, half: r.half_day ? 'Yes' : 'No', days: n(r.days), in_period: inPeriod[r.req_id],
+        paid: n(r.paid_days), lop: n(r.lop_days), status: STATUS_LABEL[r.status] || r.status,
+        by: r.final_by === 'SYSTEM' ? 'Auto-approved' : r.final_by ? Directory.name(r.final_by) : '',
+        at: r.final_at || '', submitted: r.submitted_at || '', reason: r.reason || '' };
+      return reqCols.map((c) => v[c.key]);
+    });
+
+    return {
+      scope: scope, id: id || '', title: who.title, from: from, to: to, balanceYear: balanceYear,
+      generatedAt: DateUtil.now(), generatedBy: viewer.name,
+      filename: 'leave-report_' + slug(who.title) + '_' + from + '_to_' + to,
+      totals: { people: people.length, requests: reqs.length,
+        approvedDays: round1(summaryRows.reduce((t, r) => t + n(r[summaryCols.findIndex((c) => c.key === 'days')]), 0)) },
+      tables: [
+        { name: 'Summary', note: 'Balances are for the ' + balanceYear + ' leave year. Days in period count working days only.', columns: summaryCols, rows: summaryRows },
+        { name: 'Leave requests', note: 'Every request with at least one day between ' + from + ' and ' + to + '.', columns: reqCols, rows: reqRows },
+      ],
+    };
+  }
+
+  return { scopesFor, get, org, team, person, exportData };
 })();
