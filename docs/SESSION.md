@@ -40,7 +40,7 @@ Leave Desk is Darukaa.Earth's internal leave-management app on Google Workspace.
 
 | Commit / state | Feature |
 |---|---|
-| **uncommitted → branch `claude/slack-app`** | Slack app: `/leavedesk` commands, Apply modal, requester card, Approve/Reject from DM and App Home, background job queue, per-person cache, `setupSlack()` / `checkSlack()`. Sheet styling (banding, status pills, frozen first column) and an **Overview** tab with live formulas (`SheetFormatter.writeOverview`). Notifications switched from incoming webhook to bot DMs (`SlackChannel.gs`). |
+| `e59f77a` (main, pushed) | Slack app: `/leavedesk` commands, Apply modal, requester card, Approve/Reject from DM and App Home, background job queue, per-person cache, `setupSlack()` / `checkSlack()`. Sheet styling (banding, status pills, frozen first column) and an **Overview** tab with live formulas (`SheetFormatter.writeOverview`). Notifications switched from incoming webhook to bot DMs (`SlackChannel.gs`). |
 | `f37ed36` | Download reports as Excel (CSV, UTF-8 BOM, formula-safe) or PDF (print) for any period; `ReportService.exportData`, `apiReportExport`, `test/export.test.js`. |
 | `f85aedf` | Reports tab for every role (Me; leads/C-suite see their teams; Admin sees everything) and the Admin console: Dashboard, People, Teams, Requests, Policies. `ReportService.gs`, `AdminService.gs`, `test/admin.test.js`. |
 | `28312b1` | Prototype role-picker entrance (`LOGIN_MODE=PICKER`), `setupDemo()`, admin dashboard. |
@@ -110,6 +110,6 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 1. **User:** in Slack app settings add Bot Token Scope `im:write`, reinstall, paste the new token into `SLACK_BOT_TOKEN`; optionally add commands `/leave-balance`, `/leave-requests` (same Request URL); set the `/leavedesk` usage hint to `[balance | requests | help]`.
 2. **User:** `npx clasp push --force` (ask), update the existing deployment, run `setupSlack()` in the editor, then test `/leavedesk balance` from the Leave app's Messages tab.
 3. Watch Apps Script → Executions for the line `Slack slash_command answered in N ms …` and send the numbers back if Slack still times out.
-4. Commit the Slack branch and merge when the user is happy; push to GitHub only when asked.
+4. Commit directly on `main` and push to GitHub (the user's standing choice, 2026-11-16); no attribution lines in commit messages.
 5. Production identity: decide whether Slack work emails will always equal the Employees `email` column, or whether Admin → People should get a "Slack member ID" field (column `slack_user_id` already exists).
 6. Open questions: should balance replies in channels be allowed at all, or forced to the DM? Should `/leavedesk` alone show a menu instead of the apply form?
