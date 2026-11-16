@@ -44,7 +44,9 @@ assert.strictEqual(out, '', 'slash reply must be empty when a modal opens');
 let view = last('views.open').payload.view;
 assert.strictEqual(view.callback_id, 'leave_apply'); assert.strictEqual(view.private_metadata, 'E903');
 assert.ok(/\*Paid \/ Casual Leave\*\\n20 of 20 days left/.test(flat(view.blocks)), 'balance in modal');
-assert.deepStrictEqual(view.blocks.filter((b) => b.type === 'input').map((b) => b.block_id), ['type', 'start', 'end', 'reason']);
+assert.deepStrictEqual(view.blocks.filter((b) => b.type === 'input').map((b) => b.block_id), ['type', 'start', 'end', 'half', 'reason']);
+assert.ok(view.blocks.every((b) => b.block_id !== 'start' || !b.element.initial_date), 'dates start empty (Slack would label today as "Today")');
+assert.ok(/Pick the first day and the last day/.test(flat(view.blocks)), 'summary placeholder');
 assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903');
 assert.strictEqual(JSON.parse(props.SLACK_JOBS)[0].kind, 'link');
 run('slackRunJobs()');
@@ -126,13 +128,47 @@ console.log('✓ Send request → card at once → filed as', req.req_id, '→ c
 
 // ---- bad input stays in the modal; overlap is reported on the card, nothing saved
 out = asJson(submission('2026-11-25', '2026-11-24'));
-assert.strictEqual(out.response_action, 'errors'); assert.ok(/end date is before the start date/.test(out.errors.start));
+assert.strictEqual(out.response_action, 'errors'); assert.ok(/last day is before the first day/.test(out.errors.end), JSON.stringify(out));
 asJson(submission('2026-11-19', '2026-11-19'));
 run('slackRunJobs()');
 upd = last('chat.update');
 assert.ok(/Not filed/.test(flat(upd.payload.blocks)) && /already have leave on some of these dates/.test(flat(upd.payload.blocks)), flat(upd.payload.blocks));
 assert.strictEqual(requestsOf('E903').length, 1);
 console.log('✓ bad range stays in the modal; overlap shows on the card as Not filed');
+
+// ---- picking a date redraws the form with the exact dates, working days and balance left (views.update)
+const modalState = (start, end, half) => ({ type: { v: { selected_option: { value: 'LT-PL', text: { type: 'plain_text', text: 'Paid / Casual Leave' } } } },
+  start: { v: { selected_date: start } }, end: { v: { selected_date: end } }, half: { v: { selected_options: half ? [{ value: 'half' }] : [] } }, reason: { v: { value: 'Kept' } } });
+out = interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'end', selected_date: '2026-12-04' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h1', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-12-04', false) } } });
+assert.strictEqual(out, '');
+let upv = last('views.update');
+assert.strictEqual(upv.payload.view_id, 'V1'); assert.strictEqual(upv.payload.hash, 'h1');
+const summary = upv.payload.view.blocks.find((b) => b.block_id === 'summary').text.text;
+assert.ok(/\*Mon 30 Nov 2026\* → \*Fri 4 Dec 2026\* · \*5 days\* · 18 left in Paid \/ Casual Leave/.test(summary), summary);
+assert.strictEqual(upv.payload.view.blocks.find((b) => b.block_id === 'reason').element.initial_value, 'Kept', 'typed reason survives the redraw');
+assert.strictEqual(upv.payload.view.blocks.find((b) => b.block_id === 'end').element.initial_date, '2026-12-04');
+// half day: only the first day counts, 0.5
+out = interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'half' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h2', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '', true) } } });
+upv = last('views.update');
+assert.ok(/\*Mon 30 Nov 2026\* · \*Half day\*/.test(upv.payload.view.blocks.find((b) => b.block_id === 'summary').text.text), flat(upv.payload.view.blocks));
+assert.ok(upv.payload.view.blocks.find((b) => b.block_id === 'half').element.initial_options.length === 1, 'tick kept');
+// over quota is warned about before Send
+out = interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'start' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h3', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-12-31', false) } } });
+assert.ok(/beyond your balance will be Loss of Pay/.test(last('views.update').payload.view.blocks.find((b) => b.block_id === 'summary').text.text));
+console.log('✓ Apply form shows exact dates + working days + balance as you pick; half day = 0.5; over-quota warned before Send');
+
+// ---- a half-day request is filed as 0.5 with end = start
+out = asJson(submission('2026-11-30', '', 'U-EMP', { state: { values: modalState('2026-11-30', '', true) } }));
+assert.deepStrictEqual(out, { response_action: 'clear' });
+run('slackRunJobs()');
+const halfReq = requestsOf('E903').find((r) => r.start_date === '2026-11-30');
+assert.ok(halfReq && halfReq.half_day === true && halfReq.days === 0.5 && halfReq.end_date === '2026-11-30', JSON.stringify(halfReq));
+assert.ok(/\*Working days\*\\nHalf day/.test(flat(last('chat.update').payload.blocks)), flat(last('chat.update').payload.blocks));
+run(`LeaveService.cancel(Directory.employee('E903'), '${halfReq.req_id}')`);
+console.log('✓ half day filed as', halfReq.req_id, '= 0.5 day');
 
 // ---- Approve from Slack: button → comment modal → job → decision recorded → approver card updated, requester told
 const leadCard = approverCards.find((c) => c.payload.channel === 'U-LEAD');
@@ -201,6 +237,16 @@ assert.ok(/\*Status\*\\n⏳ Waiting for Test Lead or Test CXO — either one is 
 out = interact({ type: 'block_actions', user: { id: 'U-LEAD' }, trigger_id: 'trig-3', actions: [{ action_id: 'apply', value: 'home' }], container: { type: 'view' } });
 assert.strictEqual(last('views.open').payload.view.private_metadata, 'E902', 'lead applies as themselves');
 console.log('✓ App Home: balances + inbox + Request leave; republished after the new request');
+
+// ---- moving a Slack ID to another row in the sheet re-points that Slack user on the next refresh
+run("Db.table('Employees').update('E903', { slack_user_id: '' }); Db.table('Employees').update('E901', { slack_user_id: 'U-EMP' })");
+run('SlackCache.refresh()');
+assert.strictEqual(last('views.open') && env.cache['slack:user:U-EMP'].v, 'E901', 'U-EMP now resolves to Test CXO');
+run("Db.table('Employees').update('E901', { slack_user_id: '' })");
+run('SlackCache.refresh()');
+assert.strictEqual(env.cache['slack:user:U-EMP'], undefined, 'an ID removed from every row is forgotten, not kept for six hours');
+run("Db.table('Employees').update('E903', { slack_user_id: 'U-EMP' })"); run('SlackCache.refresh()');
+console.log('✓ sheet edits to slack_user_id take effect on refresh (setupSlack or the 10-minute refresh)');
 
 // ---- Events API handshake
 assert.deepStrictEqual(asJson(post({}, JSON.stringify({ type: 'url_verification', token: 'verify-me', challenge: 'c-123' }))), { challenge: 'c-123' });

@@ -128,7 +128,8 @@ const SlackCards = (() => {
       ]),
     ];
     if (r.reason) blocks.push(section('*Reason*\n' + esc(r.reason)));
-    blocks.push(section('*Approvers*\n' + approverLines(r.approvers) +
+    const auto = !(r.approvers || []).length && r.status === 'APPROVED';
+    blocks.push(section('*Approvers*\n' + (auto ? '✅ Approved automatically — C-suite leave needs no approver.' : approverLines(r.approvers)) +
       (waiting.length > 1 ? '\n_Either approval is enough. Any rejection closes the request._' : '')));
     if (r.note) blocks.push(section(r.note));
     if (r.link) blocks.push(actions([linkButton('Open in Leave Desk', r.link)]));
@@ -136,9 +137,50 @@ const SlackCards = (() => {
     return blocks;
   }
 
-  function applyModal(snap) {
+  const fmtLong = (iso) => Utilities.formatDate(DateUtil.parse(iso), 'UTC', 'EEE d MMM yyyy');
+  const HALF_OPTION = { text: plain('Half day — only the first day, counts as 0.5'), value: 'half' };
+
+  /** Reads the modal's current values: { type_id, start, end, half, reason }. */
+  function applyState(values) {
+    const v = values || {};
+    const pick = (block, key) => (v[block] && v[block].v ? v[block].v[key] : undefined);
+    return {
+      type_id: (pick('type', 'selected_option') || {}).value || '',
+      start: pick('start', 'selected_date') || '', end: pick('end', 'selected_date') || '',
+      half: (pick('half', 'selected_options') || []).length > 0,
+      reason: pick('reason', 'value') || '',
+    };
+  }
+
+  /** "📅 Wed 18 Nov 2026 → Thu 19 Nov 2026 · 2 working days · 18 left in Paid / Casual Leave" from the cache. */
+  function applySummary(snap, s) {
+    if (!s.start) return '📅 Pick the first day' + (s.half ? '' : ' and the last day') + ' to see the exact dates and working days.';
+    const end = s.half ? s.start : s.end;
+    if (!end) return '📅 *' + esc(fmtLong(s.start)) + '* → pick the last day.';
+    if (end < s.start) return '⚠️ *' + esc(fmtLong(s.start)) + '* → *' + esc(fmtLong(end)) + '*: the last day is before the first day.';
+    const days = DateUtil.workingDays(s.start, end, Object.assign({ halfDay: s.half }, snap.calendar || {}));
+    const when = s.half || s.start === end ? '*' + esc(fmtLong(s.start)) + '*' : '*' + esc(fmtLong(s.start)) + '* → *' + esc(fmtLong(end)) + '*';
+    if (days <= 0) return '⚠️ ' + when + ': all weekend or holiday, no leave needed.';
+    const b = snap.balances.find((x) => x.type_id === s.type_id);
+    const lop = b ? Math.max(0, days - b.available) : 0;
+    return '📅 ' + when + ' · *' + dayText(days, 0) + '*' + (b ? ' · ' + b.available + ' left in ' + esc(b.name) : '') +
+      (lop > 0 ? '\n⚠️ ' + lop + (lop === 1 ? ' day' : ' days') + ' beyond your balance will be Loss of Pay.' : '');
+  }
+
+  /** The Apply form. state (optional) = values already chosen, so the form can be redrawn with a live summary. */
+  function applyModal(snap, state) {
+    const s = state || { type_id: '', start: '', end: '', half: false, reason: '' };
     const options = snap.balances.map((b) => ({ text: plain(b.name), value: b.type_id }));
-    const today = DateUtil.today();
+    const chosen = options.find((o) => o.value === s.type_id) || options[0];
+    const date = (block, label, value) => {
+      const el = { type: 'datepicker', action_id: 'v', placeholder: plain('Pick a date') };
+      if (value) el.initial_date = value;
+      return { type: 'input', block_id: block, dispatch_action: true, label: plain(label), element: el };
+    };
+    const half = { type: 'checkboxes', action_id: 'v', options: [HALF_OPTION] };
+    if (s.half) half.initial_options = [HALF_OPTION];
+    const reason = { type: 'plain_text_input', action_id: 'v', multiline: true, placeholder: plain('Optional, but it helps your approvers') };
+    if (s.reason) reason.initial_value = s.reason;
     return {
       type: 'modal', callback_id: 'leave_apply', private_metadata: snap.emp_id,
       title: plain('Apply for leave'), submit: plain('Send request'), close: plain('Cancel'),
@@ -146,12 +188,13 @@ const SlackCards = (() => {
         section('*' + who(snap) + '* · ' + snap.year),
         fields(snap.balances.map((b) => [b.name, b.available + ' of ' + b.quota + ' days left' + (b.pending ? ' · ' + b.pending + ' pending' : '')])),
         divider(),
-        { type: 'input', block_id: 'type', label: plain('Leave type'),
-          element: { type: 'static_select', action_id: 'v', options: options, initial_option: options[0] } },
-        { type: 'input', block_id: 'start', label: plain('First day'), element: { type: 'datepicker', action_id: 'v', initial_date: today } },
-        { type: 'input', block_id: 'end', label: plain('Last day'), element: { type: 'datepicker', action_id: 'v', initial_date: today } },
-        { type: 'input', block_id: 'reason', optional: true, label: plain('Reason'),
-          element: { type: 'plain_text_input', action_id: 'v', multiline: true, placeholder: plain('Optional, but it helps your approvers') } },
+        { type: 'input', block_id: 'type', dispatch_action: true, label: plain('Leave type'),
+          element: { type: 'static_select', action_id: 'v', options: options, initial_option: chosen } },
+        date('start', 'First day', s.start),
+        date('end', s.half ? 'Last day (ignored for a half day)' : 'Last day', s.end),
+        { type: 'input', block_id: 'half', optional: true, dispatch_action: true, label: plain('Duration'), element: half },
+        { type: 'section', block_id: 'summary', text: md(applySummary(snap, s)) },
+        { type: 'input', block_id: 'reason', optional: true, label: plain('Reason'), element: reason },
         context('Weekends and holidays are not counted. Days beyond your balance become Loss of Pay.'),
       ],
     };
@@ -244,5 +287,5 @@ const SlackCards = (() => {
     return reply(meta, 'Leave Desk help', blocks);
   }
 
-  return { fromMessage, requestCard, applyModal, decideModal, home, balance, requests, help, reply, ephemeral, dateRange, dayText, statusText, personRole, STATUS };
+  return { fromMessage, requestCard, applyModal, applyState, decideModal, home, balance, requests, help, reply, ephemeral, dateRange, dayText, statusText, personRole, STATUS };
 })();

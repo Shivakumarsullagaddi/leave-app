@@ -35,9 +35,12 @@ const SlackCache = (() => {
     };
   }
 
+  const LINKED = 'SLACK_LINKED_USERS';
+
   /** Builds snapshots for the given employees (or everyone active) from one read of each tab. */
   function build(empIds) {
     const year = DateUtil.year(DateUtil.today());
+    const calendar = Catalog.calendar();
     const types = Catalog.leaveTypes();
     const typeName = {};
     types.forEach((t) => { typeName[t.type_id] = t.name; });
@@ -56,7 +59,7 @@ const SlackCache = (() => {
     people.forEach((e) => {
       const snap = {
         emp_id: e.emp_id, name: e.name, email: e.email, role_level: e.role_level, emp_type: e.emp_type,
-        team: teams[e.team_id] || '', slack_user_id: e.slack_user_id || '', year: year, built_at: DateUtil.now(),
+        team: teams[e.team_id] || '', slack_user_id: e.slack_user_id || '', year: year, built_at: DateUtil.now(), calendar: calendar,
         balances: types.map((t) => {
           const b = balances.find((x) => x.emp_id === e.emp_id && x.type_id === t.type_id) || {};
           const n = (v) => Number(v) || 0;
@@ -74,7 +77,15 @@ const SlackCache = (() => {
       if (e.slack_user_id) entries[userKey(e.slack_user_id)] = e.emp_id;
     });
     cache().putAll(entries, TTL);
+    if (!empIds) forgetMovedLinks(people);
     return people.map((e) => e.emp_id);
+  }
+
+  /** A Slack ID removed from the sheet (or moved to another row) must stop resolving to the old person. */
+  function forgetMovedLinks(people) {
+    const now = people.map((e) => e.slack_user_id).filter(String);
+    JSON.parse(props().getProperty(LINKED) || '[]').forEach((u) => { if (now.indexOf(u) === -1) cache().remove(userKey(u)); });
+    props().setProperty(LINKED, JSON.stringify(now));
   }
 
   /** Rewrites everyone's snapshot. Called by the background job, never by a Slack request. */

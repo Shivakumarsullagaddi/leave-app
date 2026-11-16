@@ -13,6 +13,8 @@ The Leave app is a Slack app that talks to the Apps Script web app at `APP_URL` 
 | Leave app → **Home** tab | Dashboard | Balance, requests waiting for your decision (with Approve / Reject), your requests. Republished after every change and every ten minutes. |
 | DM from the Leave app | Approve / Reject | Approvers get a card with buttons; a comment modal opens; the decision is filed in the background and the card is updated. |
 
+**Apply form details.** Date pickers start empty (Slack itself labels today's date "Today" and tomorrow "Tomorrow"; that label is Slack's, not ours). Each pick redraws the form through `views.update` with a summary line, for example "📅 Mon 30 Nov 2026 → Fri 4 Dec 2026 · 5 days · 18 left in Paid / Casual Leave", and warns before Send when days go beyond the balance. A **Half day** checkbox under Duration files only the first day as 0.5; the last day is ignored. The typed reason survives every redraw.
+
 Aliases accepted as the first word of the text: `balance bal status left`, `requests request list mine history`, `help ?`. Anything else shows help with "I don't know `word`".
 
 ## 2. Card design rules
@@ -102,6 +104,8 @@ How Leave Desk identifies the person:
 2. On a miss, `users.info` (scope `users:read.email`) returns the profile email. That email is matched, case-insensitively, against `Employees.email`.
 3. The match is cached and written back to `Employees.slack_user_id` by the background job, so the lookup happens once per person.
 4. The **role** (Employee, Intern, Team Lead, C-suite) and the **team** come from the Employees row, never from Slack. The approval route follows from `role_level` through `ApprovalFlow`.
+
+**Testing with one Slack account.** One Slack member ID maps to exactly one row. Put the ID (and the Slack profile email) on the row of the persona you are testing and nowhere else. After editing the sheet run `setupSlack()`; otherwise the cache refreshes within ten minutes. An ID moved to another row re-points on refresh; an ID removed from every row is forgotten on refresh. You cannot request as Employee and approve as CXO from the same Slack account in one flow; do the other half in the web app with the role picker.
 
 Production implications:
 

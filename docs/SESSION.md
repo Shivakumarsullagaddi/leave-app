@@ -104,6 +104,7 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 3. **Commands**: `/leave-balance`, `/leave-requests`, `/leave-help` route by command name; `/leavedesk bal|status|left|list|mine|history|?` aliases. Slack's `/` autocomplete lists them.
 4. **Timeout work**: first-contact linking no longer creates a trigger inside the Slack request; every phase is timed and logged (`SlackHandler.timing()` in the Executions log). Explanation and remaining causes in `docs/slack-integration.md`.
 5. **Docs folder** created; project memory saved for Claude Code.
+6. **Apply form (later the same day):** date pickers start empty, every pick redraws the form with exact dates + working days + balance left (`views.update`, `dispatch_action`), over-quota warning before Send, **Half day** checkbox (0.5, first day only). Auto-approved cards say "Approved automatically". Slack IDs moved or removed in the sheet are re-pointed or forgotten on refresh (`SlackCache.forgetMovedLinks`).
 
 ## 7. Next steps (in order)
 

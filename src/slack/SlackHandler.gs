@@ -124,6 +124,13 @@ const SlackHandler = (() => {
 
   function blockAction_(p) {
     const a = (p.actions || [])[0] || {};
+    // A date, type or duration changed inside the Apply form: redraw it with the exact dates and working days.
+    if (p.view && p.view.callback_id === 'leave_apply' && ['start', 'end', 'half', 'type'].indexOf(a.block_id) !== -1) {
+      const snap = SlackCache.snapshot(p.view.private_metadata) || snapshotFor_(p.user.id);
+      SlackBot.updateView(p.view.id, p.view.hash, SlackCards.applyModal(snap, SlackCards.applyState(p.view.state && p.view.state.values)));
+      lap('views.update');
+      return null;
+    }
     if (a.action_id === 'apply') {
       SlackBot.openModal(p.trigger_id, SlackCards.applyModal(snapshotFor_(p.user.id)));
       lap('views.open');
@@ -143,20 +150,18 @@ const SlackHandler = (() => {
   /** Posts the requester's card immediately, then queues the filing. Touches no sheet. */
   function applySubmission_(p) {
     const v = p.view.state.values;
-    const input = {
-      type_id: v.type.v.selected_option.value,
-      start_date: v.start.v.selected_date,
-      end_date: v.end.v.selected_date,
-      reason: (v.reason && v.reason.v && v.reason.v.value) || '',
-    };
-    if (!input.start_date || !input.end_date) throw Errors.invalid('Pick both dates.');
-    if (input.end_date < input.start_date) throw Errors.invalid('The end date is before the start date.');
+    const s = SlackCards.applyState(v);
+    const input = { type_id: s.type_id, start_date: s.start, end_date: s.half ? s.start : s.end, half_day: s.half, reason: s.reason };
+    if (!input.start_date) throw Errors.invalid('Pick the first day.');
+    if (!input.end_date) { const errors = { end: 'Pick the last day (or tick Half day).' }; return { response_action: 'errors', errors: errors }; }
+    if (input.end_date < input.start_date) { const errors = { end: 'The last day is before the first day.' }; return { response_action: 'errors', errors: errors }; }
     const empId = p.view.private_metadata;
     const snap = SlackCache.snapshot(empId) || { name: p.user.name || 'You', team: '', role_level: '', emp_type: '' };
     const card = {
       employee: snap.name, role: SlackCards.personRole(snap), team: snap.team, type: v.type.v.selected_option.text.text,
       start_date: input.start_date, end_date: input.end_date, reason: input.reason, status: '⏳ Sending to Leave Desk…', approvers: [],
     };
+    if (input.half_day) card.days = 0.5;
     let posted = null;
     try {
       posted = SlackBot.postMessage(p.user.id, 'Leave request ' + SlackCards.dateRange(input.start_date, input.end_date), SlackCards.requestCard(card));

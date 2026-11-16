@@ -39,6 +39,7 @@ const SlackBot = (() => {
   const lookupByEmail = (email) => call('users.lookupByEmail', { email: email });
   const openModal = (triggerId, view) => call('views.open', { trigger_id: triggerId, view: view });
   const publishHome = (userId, view) => call('views.publish', { user_id: userId, view: view });
+  const updateView = (viewId, hash, view) => call('views.update', { view_id: viewId, hash: hash, view: view });
   const updateMessage = (channel, ts, text, blocks) => call('chat.update', { channel: channel, ts: ts, text: text, blocks: blocks });
   /** Posting to a member ID (U…) answers with the DM channel (D…); remember it so slash replies know they are in the app DM. */
   function postMessage(channel, text, blocks) {
@@ -81,5 +82,5 @@ const SlackBot = (() => {
     }
   }
 
-  return { prop, call, authTest, getUser, lookupByEmail, openModal, publishHome, postMessage, updateMessage, userIdByEmail, rememberUser, dmChannel, rememberDm };
+  return { prop, call, authTest, getUser, lookupByEmail, openModal, publishHome, updateView, postMessage, updateMessage, userIdByEmail, rememberUser, dmChannel, rememberDm };
 })();
