@@ -151,9 +151,9 @@ const SlackHandler = (() => {
   function applySubmission_(p) {
     const v = p.view.state.values;
     const s = SlackCards.applyState(v);
-    const input = { type_id: s.type_id, start_date: s.start, end_date: s.half ? s.start : s.end, half_day: s.half, reason: s.reason };
+    const input = { type_id: s.type_id, start_date: s.start, end_date: s.end, half_day: s.half, reason: s.reason };
     if (!input.start_date) throw Errors.invalid('Pick the first day.');
-    if (!input.end_date) { const errors = { end: 'Pick the last day (or tick Half day).' }; return { response_action: 'errors', errors: errors }; }
+    if (!input.end_date) { const errors = { end: 'Pick the last day. For one day, pick the same date.' }; return { response_action: 'errors', errors: errors }; }
     if (input.end_date < input.start_date) { const errors = { end: 'The last day is before the first day.' }; return { response_action: 'errors', errors: errors }; }
     const empId = p.view.private_metadata;
     const snap = SlackCache.snapshot(empId) || { name: p.user.name || 'You', team: '', role_level: '', emp_type: '' };

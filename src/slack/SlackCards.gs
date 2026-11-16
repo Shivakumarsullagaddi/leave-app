@@ -138,33 +138,50 @@ const SlackCards = (() => {
   }
 
   const fmtLong = (iso) => Utilities.formatDate(DateUtil.parse(iso), 'UTC', 'EEE d MMM yyyy');
-  const HALF_OPTION = { text: plain('Half day — only the first day, counts as 0.5'), value: 'half' };
+  const HALF_OPTION = { text: plain('Yes, take only half of this day (0.5 day)'), value: 'half' };
+  const daysWord = (n) => n + (n === 1 ? ' day' : ' days');
 
-  /** Reads the modal's current values: { type_id, start, end, half, reason }. */
+  /** Reads the modal's current values: { type_id, start, end, half, reason }. Half day only counts when it is a single day. */
   function applyState(values) {
     const v = values || {};
     const pick = (block, key) => (v[block] && v[block].v ? v[block].v[key] : undefined);
+    const start = pick('start', 'selected_date') || '';
+    const end = pick('end', 'selected_date') || '';
     return {
       type_id: (pick('type', 'selected_option') || {}).value || '',
-      start: pick('start', 'selected_date') || '', end: pick('end', 'selected_date') || '',
-      half: (pick('half', 'selected_options') || []).length > 0,
+      start: start, end: end,
+      half: !!start && start === end && (pick('half', 'selected_options') || []).length > 0,
       reason: pick('reason', 'value') || '',
     };
   }
 
-  /** "📅 Wed 18 Nov 2026 → Thu 19 Nov 2026 · 2 working days · 18 left in Paid / Casual Leave" from the cache. */
+  /**
+   * The "Your request" breakdown under the dates: labelled fields, not one line.
+   * Returns blocks (the first carries block_id 'summary').
+   */
   function applySummary(snap, s) {
-    if (!s.start) return '📅 Pick the first day' + (s.half ? '' : ' and the last day') + ' to see the exact dates and working days.';
-    const end = s.half ? s.start : s.end;
-    if (!end) return '📅 *' + esc(fmtLong(s.start)) + '* → pick the last day.';
-    if (end < s.start) return '⚠️ *' + esc(fmtLong(s.start)) + '* → *' + esc(fmtLong(end)) + '*: the last day is before the first day.';
-    const days = DateUtil.workingDays(s.start, end, Object.assign({ halfDay: s.half }, snap.calendar || {}));
-    const when = s.half || s.start === end ? '*' + esc(fmtLong(s.start)) + '*' : '*' + esc(fmtLong(s.start)) + '* → *' + esc(fmtLong(end)) + '*';
-    if (days <= 0) return '⚠️ ' + when + ': all weekend or holiday, no leave needed.';
-    const b = snap.balances.find((x) => x.type_id === s.type_id);
-    const lop = b ? Math.max(0, days - b.available) : 0;
-    return '📅 ' + when + ' · *' + dayText(days, 0) + '*' + (b ? ' · ' + b.available + ' left in ' + esc(b.name) : '') +
-      (lop > 0 ? '\n⚠️ ' + lop + (lop === 1 ? ' day' : ' days') + ' beyond your balance will be Loss of Pay.' : '');
+    const hint = (t) => [{ type: 'section', block_id: 'summary', text: md(t) }];
+    if (!s.start || !s.end) return hint('📅 *Your request*\nPick the first and last day to see how many days you are taking and what will be left.');
+    if (s.end < s.start) return hint('⚠️ *The last day is before the first day.* Pick the dates again.');
+    const days = DateUtil.workingDays(s.start, s.end, Object.assign({ halfDay: s.half }, snap.calendar || {}));
+    if (days <= 0) return hint('⚠️ *' + esc(dateRange(s.start, s.end)) + '* is all weekend or holiday. No leave is needed.');
+    const span = Math.round((DateUtil.parse(s.end) - DateUtil.parse(s.start)) / 86400000) + 1;
+    const skipped = s.half ? 0 : span - days;
+    const b = snap.balances.find((x) => x.type_id === s.type_id) || { name: '', available: 0, quota: 0 };
+    const after = b.available - days;
+    const lop = Math.max(0, -after);
+    const when = s.start === s.end ? fmtLong(s.start) : fmtLong(s.start) + '\nto ' + fmtLong(s.end);
+    const blocks = [{
+      type: 'section', block_id: 'summary', text: md('📅 *Your request*'),
+      fields: [
+        md('*Dates*\n' + esc(when)),
+        md('*Days you are taking*\n' + (s.half ? 'Half day (0.5)' : daysWord(days)) + (skipped > 0 ? '\n_' + daysWord(skipped) + ' weekend/holiday not counted_' : '')),
+        md('*' + esc(b.name) + ' left now*\n' + daysWord(b.available) + ' of ' + b.quota),
+        md('*Left after this request*\n' + (lop > 0 ? '0 days' : daysWord(after))),
+      ],
+    }];
+    if (lop > 0) blocks.push(context('⚠️ ' + daysWord(lop) + ' beyond your balance will be *Loss of Pay*.'));
+    return blocks;
   }
 
   /** The Apply form. state (optional) = values already chosen, so the form can be redrawn with a live summary. */
@@ -177,26 +194,30 @@ const SlackCards = (() => {
       if (value) el.initial_date = value;
       return { type: 'input', block_id: block, dispatch_action: true, label: plain(label), element: el };
     };
-    const half = { type: 'checkboxes', action_id: 'v', options: [HALF_OPTION] };
-    if (s.half) half.initial_options = [HALF_OPTION];
     const reason = { type: 'plain_text_input', action_id: 'v', multiline: true, placeholder: plain('Optional, but it helps your approvers') };
     if (s.reason) reason.initial_value = s.reason;
+    const blocks = [
+      section('*' + who(snap) + '* · ' + snap.year),
+      fields(snap.balances.map((b) => [b.name, b.available + ' of ' + b.quota + ' days left' + (b.pending ? ' · ' + b.pending + ' pending' : '')])),
+      divider(),
+      { type: 'input', block_id: 'type', dispatch_action: true, label: plain('Leave type'),
+        element: { type: 'static_select', action_id: 'v', options: options, initial_option: chosen } },
+      date('start', 'First day', s.start),
+      date('end', 'Last day', s.end),
+    ];
+    // The half-day question only exists for a single day.
+    if (s.start && s.start === s.end) {
+      const half = { type: 'checkboxes', action_id: 'v', options: [HALF_OPTION] };
+      if (s.half) half.initial_options = [HALF_OPTION];
+      blocks.push({ type: 'input', block_id: 'half', optional: true, dispatch_action: true, label: plain('Do you want to take a half day?'), element: half });
+    }
+    blocks.push(divider());
+    blocks.push.apply(blocks, applySummary(snap, s));
+    blocks.push(divider(), { type: 'input', block_id: 'reason', optional: true, label: plain('Reason'), element: reason },
+      context('Weekends and holidays are not counted. Days beyond your balance become Loss of Pay.'));
     return {
       type: 'modal', callback_id: 'leave_apply', private_metadata: snap.emp_id,
-      title: plain('Apply for leave'), submit: plain('Send request'), close: plain('Cancel'),
-      blocks: [
-        section('*' + who(snap) + '* · ' + snap.year),
-        fields(snap.balances.map((b) => [b.name, b.available + ' of ' + b.quota + ' days left' + (b.pending ? ' · ' + b.pending + ' pending' : '')])),
-        divider(),
-        { type: 'input', block_id: 'type', dispatch_action: true, label: plain('Leave type'),
-          element: { type: 'static_select', action_id: 'v', options: options, initial_option: chosen } },
-        date('start', 'First day', s.start),
-        date('end', s.half ? 'Last day (ignored for a half day)' : 'Last day', s.end),
-        { type: 'input', block_id: 'half', optional: true, dispatch_action: true, label: plain('Duration'), element: half },
-        { type: 'section', block_id: 'summary', text: md(applySummary(snap, s)) },
-        { type: 'input', block_id: 'reason', optional: true, label: plain('Reason'), element: reason },
-        context('Weekends and holidays are not counted. Days beyond your balance become Loss of Pay.'),
-      ],
+      title: plain('Apply for leave'), submit: plain('Send request'), close: plain('Cancel'), blocks: blocks,
     };
   }
 

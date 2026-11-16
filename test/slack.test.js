@@ -44,9 +44,9 @@ assert.strictEqual(out, '', 'slash reply must be empty when a modal opens');
 let view = last('views.open').payload.view;
 assert.strictEqual(view.callback_id, 'leave_apply'); assert.strictEqual(view.private_metadata, 'E903');
 assert.ok(/\*Paid \/ Casual Leave\*\\n20 of 20 days left/.test(flat(view.blocks)), 'balance in modal');
-assert.deepStrictEqual(view.blocks.filter((b) => b.type === 'input').map((b) => b.block_id), ['type', 'start', 'end', 'half', 'reason']);
+assert.deepStrictEqual(view.blocks.filter((b) => b.type === 'input').map((b) => b.block_id), ['type', 'start', 'end', 'reason'], 'no half-day question until a single day is picked');
 assert.ok(view.blocks.every((b) => b.block_id !== 'start' || !b.element.initial_date), 'dates start empty (Slack would label today as "Today")');
-assert.ok(/Pick the first day and the last day/.test(flat(view.blocks)), 'summary placeholder');
+assert.ok(/Pick the first and last day/.test(flat(view.blocks)), 'summary placeholder');
 assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903');
 assert.strictEqual(JSON.parse(props.SLACK_JOBS)[0].kind, 'link');
 run('slackRunJobs()');
@@ -144,24 +144,40 @@ out = interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ actio
 assert.strictEqual(out, '');
 let upv = last('views.update');
 assert.strictEqual(upv.payload.view_id, 'V1'); assert.strictEqual(upv.payload.hash, 'h1');
-const summary = upv.payload.view.blocks.find((b) => b.block_id === 'summary').text.text;
-assert.ok(/\*Mon 30 Nov 2026\* → \*Fri 4 Dec 2026\* · \*5 days\* · 18 left in Paid \/ Casual Leave/.test(summary), summary);
+const summaryOf = (v) => flat(v.blocks.find((b) => b.block_id === 'summary'));
+let summary = summaryOf(upv.payload.view);
+assert.ok(/\*Dates\*\\nMon 30 Nov 2026\\nto Fri 4 Dec 2026/.test(summary) && /\*Days you are taking\*\\n5 days/.test(summary) &&
+  /\*Paid \/ Casual Leave left now\*\\n18 days of 20/.test(summary) && /\*Left after this request\*\\n13 days/.test(summary), summary);
+assert.ok(!upv.payload.view.blocks.some((b) => b.block_id === 'half'), 'no half-day question for a range');
 assert.strictEqual(upv.payload.view.blocks.find((b) => b.block_id === 'reason').element.initial_value, 'Kept', 'typed reason survives the redraw');
 assert.strictEqual(upv.payload.view.blocks.find((b) => b.block_id === 'end').element.initial_date, '2026-12-04');
-// half day: only the first day counts, 0.5
-out = interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'half' }],
-  container: { type: 'view' }, view: { id: 'V1', hash: 'h2', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '', true) } } });
+// weekends inside the range are called out
+interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'end' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h1b', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-27', '2026-11-30', false) } } });
+assert.ok(/\*Days you are taking\*\\n2 days\\n_2 days weekend\/holiday not counted_/.test(summaryOf(last('views.update').payload.view)), summaryOf(last('views.update').payload.view));
+// same first and last day: the half-day question appears; ticking it makes it 0.5
+interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'end' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h2', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-11-30', false) } } });
 upv = last('views.update');
-assert.ok(/\*Mon 30 Nov 2026\* · \*Half day\*/.test(upv.payload.view.blocks.find((b) => b.block_id === 'summary').text.text), flat(upv.payload.view.blocks));
+assert.ok(/Do you want to take a half day\?/.test(flat(upv.payload.view.blocks.find((b) => b.block_id === 'half'))), 'half-day question for a single day');
+assert.ok(/\*Days you are taking\*\\n1 day/.test(summaryOf(upv.payload.view)));
+interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'half' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h3', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-11-30', true) } } });
+upv = last('views.update');
+summary = summaryOf(upv.payload.view);
+assert.ok(/\*Dates\*\\nMon 30 Nov 2026"/.test(summary) && /Half day \(0\.5\)/.test(summary) && /\*Left after this request\*\\n17\.5 days/.test(summary), summary);
 assert.ok(upv.payload.view.blocks.find((b) => b.block_id === 'half').element.initial_options.length === 1, 'tick kept');
+// a stale half-day tick is ignored once the dates become a range
+assert.strictEqual(run(`SlackCards.applyState(${JSON.stringify(modalState('2026-11-30', '2026-12-01', true))}).half`), false);
 // over quota is warned about before Send
-out = interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'start' }],
-  container: { type: 'view' }, view: { id: 'V1', hash: 'h3', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-12-31', false) } } });
-assert.ok(/beyond your balance will be Loss of Pay/.test(last('views.update').payload.view.blocks.find((b) => b.block_id === 'summary').text.text));
-console.log('✓ Apply form shows exact dates + working days + balance as you pick; half day = 0.5; over-quota warned before Send');
+interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'start' }],
+  container: { type: 'view' }, view: { id: 'V1', hash: 'h4', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-12-31', false) } } });
+assert.ok(/\*Left after this request\*\\n0 days/.test(summaryOf(last('views.update').payload.view)) &&
+  /beyond your balance will be \*Loss of Pay\*/.test(flat(last('views.update').payload.view.blocks)));
+console.log('✓ Apply form: labelled breakdown (dates, days taking, left now, left after); half-day question only for a single day; LOP warned');
 
 // ---- a half-day request is filed as 0.5 with end = start
-out = asJson(submission('2026-11-30', '', 'U-EMP', { state: { values: modalState('2026-11-30', '', true) } }));
+out = asJson(submission('2026-11-30', '2026-11-30', 'U-EMP', { state: { values: modalState('2026-11-30', '2026-11-30', true) } }));
 assert.deepStrictEqual(out, { response_action: 'clear' });
 run('slackRunJobs()');
 const halfReq = requestsOf('E903').find((r) => r.start_date === '2026-11-30');
