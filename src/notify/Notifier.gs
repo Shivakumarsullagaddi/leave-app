@@ -25,6 +25,7 @@ const Notifier = (() => {
 
   /** @param {string|null} event  @param {{reqId: string, actorId?: string}} ctx */
   function publish(event, ctx) {
+    try { SlackCache.markDirty(); } catch (e) { /* Slack not set up */ }
     if (!event) return null;
     try {
       const request = RequestView.byId(ctx.reqId);

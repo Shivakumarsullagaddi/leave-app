@@ -159,12 +159,18 @@ refused(run(`apiSetViewAs('', 'E001')`), 'FORBIDDEN', 'view-as by non-admin');
 // --- Slack takes over from email when enabled
 as('shivakumar.u@darukaa.com');
 run(`Db.table('Settings').update('SLACK_ENABLED',{value:'TRUE'});
-     PropertiesService.getScriptProperties().setProperty('SLACK_WEBHOOK_URL','https://hooks.slack.test/x');`);
+     PropertiesService.getScriptProperties().setProperty('SLACK_BOT_TOKEN','xoxb-test');`);
+env.slackReply = (m, p) => (m === 'users.lookupByEmail' ? { ok: true, user: { id: 'U-' + p.email.split('@')[0] } } : { ok: true });
 const mails = env.mail.length;
 viewAs('E012');
 ok(run(`apiSubmit('', {type_id:'LT-SL',start_date:'2026-12-21',end_date:'2026-12-21',reason:'Checkup'})`), 'hardik');
 assert.strictEqual(env.mail.length, mails);
-console.log('✓ Slack used when enabled:', env.fetches.at(-1).blocks[0].text.text);
+const dms = env.slack.filter((c) => c.method === 'chat.postMessage');
+assert.ok(dms.length >= 1 && dms.every((c) => /^U-/.test(c.payload.channel)), 'approvers get DMs');
+const card = dms.at(-1).payload.blocks;
+assert.strictEqual(card[0].type, 'header');
+assert.ok(card.some((b) => b.type === 'actions' && b.elements.some((e) => e.action_id === 'approve')), 'approver card has an Approve button');
+console.log('✓ Slack DMs used when enabled → ' + dms.map((c) => c.payload.channel).join(', ') + ':', card[0].text.text, '·', card[1].text.text);
 
 // --- integrity: every balance equals what its requests say
 run('Db.refresh()');

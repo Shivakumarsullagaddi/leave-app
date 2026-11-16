@@ -191,6 +191,7 @@ const SetupEngine = (() => {
       const summary = DB_SCHEMA.map((table) => prepareTable(ss, table, seed[table.name], opts.reset));
       DB_SCHEMA.forEach((table) => SheetFormatter.style(ss, ss.getSheetByName(table.name), table));
       SheetFormatter.writeReadme(ss);
+      SheetFormatter.writeOverview(ss);
       SheetFormatter.orderTabs(ss);
       SheetFormatter.removeEmptyTabs(ss);
 
@@ -237,7 +238,7 @@ const SetupEngine = (() => {
 
   function ensureSecretPlaceholders() {
     const props = PropertiesService.getScriptProperties();
-    if (props.getProperty('SLACK_WEBHOOK_URL') === null) props.setProperty('SLACK_WEBHOOK_URL', '');
+    if (props.getProperty('SLACK_BOT_TOKEN') === null) props.setProperty('SLACK_BOT_TOKEN', '');
   }
 
   function check() {

@@ -20,14 +20,33 @@ const Messages = (() => {
 
   const approverIds = (r, filter) => r.approvals.filter((a) => a.approver_id !== Directory.SYSTEM && (!filter || filter(a))).map((a) => a.approver_id);
   const pendingIds = (r) => approverIds(r, (a) => a.decision === 'PENDING');
+  const joinNames = (names) => names.reduce((acc, n, i) => acc + (i === 0 ? '' : i === names.length - 1 ? ' and ' : ', ') + n, '');
+
+  const DECISION = { PENDING: '⏳', APPROVED: '✅', REJECTED: '❌', AUTO: '✅', NO_ACTION: '—' };
+  function statusText(r) {
+    const waiting = r.approvals.filter((a) => a.decision === 'PENDING').map((a) => a.name);
+    const by = r.final_by_name && r.final_by !== Directory.SYSTEM ? ' by ' + r.final_by_name : '';
+    switch (r.status) {
+      case 'PENDING':   return '⏳ Waiting for ' + (waiting.length ? joinNames(waiting) : 'approval') + (waiting.length > 1 ? ' (either one is enough)' : '');
+      case 'APPROVED':  return '✅ Approved' + (by || ' automatically');
+      case 'REJECTED':  return '❌ Rejected' + by;
+      case 'CANCELLED': return '🚫 Cancelled by the requester';
+      default:          return r.status;
+    }
+  }
 
   function fields(r) {
-    return [
+    const approvers = r.approvals.filter((a) => a.approver_id !== Directory.SYSTEM);
+    const list = [
       { label: 'Employee', value: r.employee.name + (r.employee.team_name ? ' · ' + r.employee.team_name : '') },
-      { label: 'Type', value: r.type_name },
+      { label: 'Leave type', value: r.type_name },
       { label: 'Dates', value: dateRange(r) },
       { label: 'Days', value: dayText(r) },
+      { label: 'Status', value: statusText(r) },
     ];
+    if (approvers.length) list.push({ label: 'Approvers', value: approvers.map((a) => DECISION[a.decision] + ' ' + a.name + (ROLE_LABEL[a.role] ? ' (' + ROLE_LABEL[a.role] + ')' : '')).join('\n') });
+    list.push({ label: 'Request', value: r.req_id + (r.submitted_at ? ' · sent ' + r.submitted_at : '') });
+    return list;
   }
 
   function link(view, reqId) {
@@ -41,9 +60,9 @@ const Messages = (() => {
       return {
         subject: 'Leave request from ' + r.employee.name + ': ' + dateRange(r),
         tone: r.over_quota ? 'warn' : 'info', badge: r.over_quota ? 'Over quota' : '',
-        parts: ['New leave request for '].concat(joinPeople(approvers), [approvers.length > 1 ? '. Either approval is enough.' : '.']),
+        parts: [person(r.emp_id), ' is asking for leave. Over to '].concat(joinPeople(approvers), [approvers.length > 1 ? ' — either approval is enough.' : '.']),
         comment: r.reason ? 'Reason: ' + r.reason : '',
-        recipients: approvers, link: link('approvals', r.req_id),
+        recipients: approvers, actors: pendingIds(r), link: link('approvals', r.req_id),
       };
     },
     AUTO_APPROVED: (r) => ({
@@ -58,7 +77,7 @@ const Messages = (() => {
         subject: 'Approved: your leave ' + dateRange(r),
         tone: 'good', badge: 'Approved',
         parts: ['Approved by ', person(actor.emp_id), role ? ' (' + role + ')' : '', '. ', person(r.emp_id), ', your leave is confirmed.'],
-        recipients: people([r.emp_id].concat(pendingIds(r))), link: link('requests', r.req_id),
+        recipients: people([r.emp_id].concat(pendingIds(r))), actors: pendingIds(r), link: link('requests', r.req_id),
       };
     },
     APPROVAL_ADDED: (r, actor) => ({
@@ -90,7 +109,8 @@ const Messages = (() => {
   function build(event, request, actor) {
     const template = TEMPLATES[event];
     if (!template || !request) return null;
-    return Object.assign({ event: event, fields: fields(request), comment: '', badge: '', reqId: request.req_id },
+    return Object.assign({ event: event, fields: fields(request), comment: '', badge: '', actors: [], reqId: request.req_id,
+      summary: { employee: request.employee.name, dates: dateRange(request), type: request.type_name, days: dayText(request) } },
       template(request, actor || {}));
   }
 

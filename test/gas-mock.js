@@ -47,8 +47,12 @@ class Sheet {
   protect() { return noop(); }
   clear() { this.grid = []; }
   getColumnWidth() { return 120; }
+  getBandings() { return []; }
+  getFilter() { return null; }
+  setConditionalFormatRules(rules) { this.cfRules = rules; return this; }
 }
-['setFrozenRows', 'setRowHeight', 'setTabColor', 'autoResizeColumns', 'setColumnWidth'].forEach((m) => { Sheet.prototype[m] = function () { return this; }; });
+['setFrozenRows', 'setFrozenColumns', 'setHiddenGridlines', 'setRowHeight', 'setRowHeights', 'setTabColor', 'autoResizeColumns', 'setColumnWidth',
+  'clearConditionalFormatRules', 'hideColumns', 'showColumns'].forEach((m) => { Sheet.prototype[m] = function () { return this; }; });
 
 function range(sheet, r, c, nr, nc) {
   const api = {
@@ -100,10 +104,12 @@ class Book {
   toast() {}
 }
 
+function assert_(cond, msg) { if (!cond) throw new Error(msg); }
+
 function makeEnv(opts) {
   const book = new Book();
   const props = {};
-  const env = { book, mail: [], fetches: [], user: opts.user, today: opts.now, cache: {}, tokenResponse: null };
+  const env = { book, mail: [], fetches: [], slack: [], slackReply: null, triggers: [], triggerSeq: 0, user: opts.user, today: opts.now, cache: {}, tokenResponse: null };
   const dv = () => {
     const b = { kind: null, strict: true };
     return new Proxy(b, { get: (t, k) => {
@@ -121,6 +127,7 @@ function makeEnv(opts) {
       getActiveSpreadsheet: () => (env.webapp ? null : book), openById: () => book, getActive: () => book,
       getUi: () => { throw new Error('no ui'); }, flush() {},
       newDataValidation: () => (p = dv()), ProtectionType: { SHEET: 'SHEET' },
+      newConditionalFormatRule: () => noop(), BandingTheme: { LIGHT_GREY: 'LIGHT_GREY' },
     },
     PropertiesService: { getScriptProperties: () => ({
       getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = v; }, deleteProperty: (k) => { delete props[k]; } }) },
@@ -133,13 +140,44 @@ function makeEnv(opts) {
         const r = env.tokenResponse || { code: 400, body: '{"error":"invalid_grant"}' };
         return { getResponseCode: () => r.code, getContentText: () => r.body };
       }
+      if (u.indexOf('https://slack.com/api/') === 0) {
+        const method = u.slice('https://slack.com/api/'.length);
+        assert_(typeof o.payload === 'object' && !o.contentType, 'Slack calls must be form-encoded, not JSON (' + method + ')');
+        const payload = {};
+        Object.keys(o.payload).forEach((k) => { const v = o.payload[k]; payload[k] = /^[\[{]/.test(v) ? JSON.parse(v) : v; });
+        env.slack.push({ method, payload });
+        // Like Slack: posting to a member (U…) answers with the DM channel (D…); conversations.open names that channel.
+        const dm = (u) => String(u).replace(/^U/, 'D-U');
+        const reply = (env.slackReply && env.slackReply(method, payload)) ||
+          (method === 'chat.postMessage' ? { ok: true, channel: /^U/.test(payload.channel) ? dm(payload.channel) : payload.channel, ts: 'ts-' + env.slack.length }
+            : method === 'conversations.open' ? { ok: true, channel: { id: dm(payload.users) } } : { ok: true });
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify(reply),
+          getAllHeaders: () => ({ 'x-oauth-scopes': env.slackScopes || 'commands,users:read,users:read.email,chat:write,im:write' }) };
+      }
       env.fetches.push(JSON.parse(o.payload)); return { getResponseCode: () => 200, getContentText: () => 'ok' }; } },
+    ContentService: {
+      MimeType: { JSON: 'application/json' },
+      createTextOutput: (text) => ({ text, mime: 'text/plain', setMimeType(m) { this.mime = m; return this; }, getContent() { return this.text; } }),
+    },
     HtmlService: {},
-    CacheService: { getScriptCache: () => ({
-      get: (k) => { const e = env.cache[k]; return e && e.exp > Date.parse(env.today) ? e.v : null; },
-      put: (k, v, sec) => { env.cache[k] = { v: String(v), exp: Date.parse(env.today) + sec * 1000 }; },
-      remove: (k) => { delete env.cache[k]; } }) },
-    ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }) },
+    CacheService: { getScriptCache: () => {
+      const get = (k) => { const e = env.cache[k]; return e && e.exp > Date.parse(env.today) ? e.v : null; };
+      const put = (k, v, sec) => { env.cache[k] = { v: String(v), exp: Date.parse(env.today) + (sec || 600) * 1000 }; };
+      return { get, put, remove: (k) => { delete env.cache[k]; },
+        putAll: (obj, sec) => Object.keys(obj).forEach((k) => put(k, obj[k], sec)),
+        getAll: (keys) => { const out = {}; keys.forEach((k) => { const v = get(k); if (v !== null) out[k] = v; }); return out; } };
+    } },
+    ScriptApp: {
+      getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }),
+      newTrigger: (fn) => {
+        const t = { fn, kind: '' };
+        const b = { timeBased: () => b, after: () => { t.kind = 'once'; return b; }, everyMinutes: () => { t.kind = 'minute'; return b; },
+          create: () => { t.id = 'trg-' + (++env.triggerSeq); env.triggers.push(t); return { getUniqueId: () => t.id, getHandlerFunction: () => t.fn }; } };
+        return b;
+      },
+      getProjectTriggers: () => env.triggers.map((t) => ({ getHandlerFunction: () => t.fn, getUniqueId: () => t.id })),
+      deleteTrigger: (tr) => { env.triggers = env.triggers.filter((t) => t.id !== tr.getUniqueId()); },
+    },
   };
   // Freeze "now" while keeping instanceof Date working
   ctx.Date = new Proxy(Date, {

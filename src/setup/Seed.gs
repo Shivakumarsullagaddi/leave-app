@@ -21,7 +21,7 @@ function buildSeed_(nowStr) {
     ['DECISION_LOCK', 'LEAVE_START', 'Decisions can change until the leave start date, then lock.'],
     ['OVER_QUOTA', 'ALLOW_AS_LOP', 'Allow requests beyond balance; extra days recorded as Loss of Pay.'],
     ['CSUITE_AUTO_APPROVE', 'TRUE', 'C-suite leave is approved automatically and logged.'],
-    ['SLACK_ENABLED', 'FALSE', 'Turn on after adding the webhook URL in Script Properties (SLACK_WEBHOOK_URL).'],
+    ['SLACK_ENABLED', 'FALSE', 'Turn on after adding the bot token in Script Properties (SLACK_BOT_TOKEN); people get DMs from the Leave app.'],
     ['SLACK_DEFAULT_CHANNEL', '#leave-requests', 'Channel for request messages when a team has none.'],
     ['SLACK_ADMIN_CHANNEL', '#hr-admin', 'Channel for accrual and admin summaries.'],
     ['EMAIL_FALLBACK', 'TRUE', 'Also email approvers if Slack is off or fails.'],

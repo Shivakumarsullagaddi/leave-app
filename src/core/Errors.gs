@@ -19,4 +19,8 @@ const Errors = {
     (email ? email + ' is' : 'Your account is') + ' not in the Leave Desk directory. Ask the admin to add you.'),
   setup:        (msg) => new AppError('SETUP', msg),
   unauthenticated: () => new AppError('UNAUTHENTICATED', 'Your session has ended. Please sign in again.'),
+  unauthorized: (msg) => new AppError('UNAUTHORIZED', msg),
+  badRequest:   (msg) => new AppError('BAD_REQUEST', msg),
+  config:       (msg) => new AppError('CONFIG', msg),
+  slack:        (msg) => new AppError('SLACK', msg),
 };
