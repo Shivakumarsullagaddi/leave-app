@@ -95,6 +95,8 @@ function buildSeed_(nowStr) {
     ['F2', 'EMPLOYEE', 'TEAM_CSUITE'],
     ['F3', 'LEAD', 'TEAM_CSUITE'],
     ['F4', 'CSUITE', 'AUTO'],
+    ['F5', 'EMPLOYEE', 'ADMIN'],
+    ['F6', 'LEAD', 'ADMIN'],
   ].map(function (r) {
     return { flow_id: r[0], requester_role: r[1], team_id: '*', approver_rule: r[2], approver_id: '', mode: 'PARALLEL', active: true };
   });

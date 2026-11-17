@@ -47,7 +47,7 @@
       const [d, t] = dt.split(' ');
       return asDate(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) + (t ? ', ' + t : '');
     },
-    role: (r) => ({ TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', SYSTEM: 'Auto', LEAD: 'Team Lead', EMPLOYEE: 'Employee' }[r] || r),
+    role: (r) => ({ TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', ADMIN: 'Admin', SYSTEM: 'Auto', LEAD: 'Team Lead', EMPLOYEE: 'Employee' }[r] || r),
     type: (t) => ({ FT: 'Full-time', INT: 'Intern', CON: 'Contractor' }[t] || t),
     title: (s) => String(s || '').toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase()),
   };

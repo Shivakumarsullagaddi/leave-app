@@ -35,7 +35,7 @@ const SlackCards = (() => {
   const dayText = (days, lop) => (days === 0.5 ? 'Half day' : days + (days === 1 ? ' day' : ' days')) + (lop > 0 ? ' (' + lop + ' Loss of Pay)' : '');
   const stamp = (s) => String(s || '').slice(0, 16).replace('T', ' ');
 
-  const ROLE = { TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', SYSTEM: 'Automatic' };
+  const ROLE = { TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', ADMIN: 'Admin', SYSTEM: 'Automatic' };
   /** "Team Lead", "Intern" … from the Employees row. */
   const personRole = (p) => (p.role_level === 'CSUITE' ? 'C-suite' : p.role_level === 'LEAD' ? 'Team Lead'
     : p.emp_type === 'INT' ? 'Intern' : p.emp_type === 'CON' ? 'Contractor' : 'Employee');
@@ -59,7 +59,7 @@ const SlackCards = (() => {
     const by = (d) => { const a = list.find((x) => x.decision === d); return a ? ' by ' + esc(a.name) : ''; };
     if (status === 'PENDING') {
       const waiting = pendingOf(list);
-      return '⏳ Waiting for ' + (waiting.length ? names(waiting) : 'approval') + (waiting.length > 1 ? ' — either one is enough' : '');
+      return '⏳ Waiting for ' + (waiting.length ? names(waiting) : 'approval') + (waiting.length > 1 ? ' — ' + (waiting.length > 2 ? 'any' : 'either') + ' one is enough' : '');
     }
     if (status === 'APPROVED') return '✅ Approved' + (by('APPROVED') || by('AUTO') || (list.some((a) => a.decision === 'AUTO') ? ' automatically' : ''));
     if (status === 'REJECTED') return '❌ Rejected' + by('REJECTED');
@@ -130,7 +130,7 @@ const SlackCards = (() => {
     if (r.reason) blocks.push(section('*Reason*\n' + esc(r.reason)));
     const auto = !(r.approvers || []).length && r.status === 'APPROVED';
     blocks.push(section('*Approvers*\n' + (auto ? '✅ Approved automatically — C-suite leave needs no approver.' : approverLines(r.approvers)) +
-      (waiting.length > 1 ? '\n_Either approval is enough. Any rejection closes the request._' : '')));
+      (waiting.length > 1 ? '\n_' + (waiting.length > 2 ? 'Any one' : 'Either') + ' approval is enough. Any rejection closes the request._' : '')));
     if (r.note) blocks.push(section(r.note));
     if (r.link) blocks.push(actions([linkButton('Open in Leave Desk', r.link)]));
     blocks.push(context((r.req_id ? esc(r.req_id) + ' · ' : '') + (r.submitted_at ? 'sent ' + esc(stamp(r.submitted_at)) + ' · ' : '') + appName()));

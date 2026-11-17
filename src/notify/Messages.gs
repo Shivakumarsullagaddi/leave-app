@@ -7,7 +7,7 @@
  * @mention and email can render a name. Add an event = add one template.
  */
 const Messages = (() => {
-  const ROLE_LABEL = { TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', SYSTEM: 'Auto' };
+  const ROLE_LABEL = { TEAM_LEAD: 'Team Lead', CSUITE: 'C-suite', SPECIFIC: 'Approver', ADMIN: 'Admin', SYSTEM: 'Auto' };
 
   const fmtDate = (iso) => Utilities.formatDate(DateUtil.parse(iso), 'UTC', 'EEE d MMM');
   const dateRange = (r) => (r.start_date === r.end_date ? fmtDate(r.start_date) : fmtDate(r.start_date) + ' – ' + fmtDate(r.end_date));
@@ -27,7 +27,7 @@ const Messages = (() => {
     const waiting = r.approvals.filter((a) => a.decision === 'PENDING').map((a) => a.name);
     const by = r.final_by_name && r.final_by !== Directory.SYSTEM ? ' by ' + r.final_by_name : '';
     switch (r.status) {
-      case 'PENDING':   return '⏳ Waiting for ' + (waiting.length ? joinNames(waiting) : 'approval') + (waiting.length > 1 ? ' (either one is enough)' : '');
+      case 'PENDING':   return '⏳ Waiting for ' + (waiting.length ? joinNames(waiting) : 'approval') + (waiting.length > 1 ? ' (' + (waiting.length > 2 ? 'any' : 'either') + ' one is enough)' : '');
       case 'APPROVED':  return '✅ Approved' + (by || ' automatically');
       case 'REJECTED':  return '❌ Rejected' + by;
       case 'CANCELLED': return '🚫 Cancelled by the requester';
@@ -60,7 +60,7 @@ const Messages = (() => {
       return {
         subject: 'Leave request from ' + r.employee.name + ': ' + dateRange(r),
         tone: r.over_quota ? 'warn' : 'info', badge: r.over_quota ? 'Over quota' : '',
-        parts: [person(r.emp_id), ' is asking for leave. Over to '].concat(joinPeople(approvers), [approvers.length > 1 ? ' — either approval is enough.' : '.']),
+        parts: [person(r.emp_id), ' is asking for leave. Over to '].concat(joinPeople(approvers), [approvers.length > 2 ? ' — any one approval is enough.' : approvers.length > 1 ? ' — either approval is enough.' : '.']),
         comment: r.reason ? 'Reason: ' + r.reason : '',
         recipients: approvers, actors: pendingIds(r), link: link('approvals', r.req_id),
       };

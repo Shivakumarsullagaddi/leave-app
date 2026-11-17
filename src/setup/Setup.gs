@@ -228,9 +228,13 @@ const SetupEngine = (() => {
       (seeded ? ' · ' + seeded + ' rows added' : '');
   }
 
-  /** For tables that are already filled, only Settings gets new keys topped up. */
+  /**
+   * For tables that are already filled, only Settings (new keys) and ApprovalFlow (new flow_ids,
+   * e.g. the ADMIN rows) are topped up. A row that exists is never touched: untick `active` to switch it off.
+   */
+  const TOP_UP = ['Settings', 'ApprovalFlow'];
   function missingOnly(sheet, table, seedRows) {
-    if (table.name !== 'Settings') return [];
+    if (TOP_UP.indexOf(table.name) === -1) return [];
     const idKey = table.columns[0].name;
     const existing = SheetTools.readIds(sheet);
     return seedRows.filter((r) => existing.indexOf(String(r[idKey])) === -1);

@@ -10,6 +10,9 @@ const ApprovalRouter = (() => {
     TEAM_LEAD:   (emp, team) => (team && team.lead_id ? [{ approver_id: team.lead_id, approver_role: 'TEAM_LEAD' }] : []),
     TEAM_CSUITE: (emp, team) => (team && team.csuite_id ? [{ approver_id: team.csuite_id, approver_role: 'CSUITE' }] : []),
     SPECIFIC:    (emp, team, flow) => (flow.approver_id ? [{ approver_id: flow.approver_id, approver_role: 'SPECIFIC' }] : []),
+    // Everyone listed in Settings → ADMIN_EMAILS who is an active employee.
+    ADMIN:       () => Config.list('ADMIN_EMAILS').map(Directory.byEmail).filter(Boolean)
+      .map((e) => ({ approver_id: e.emp_id, approver_role: 'ADMIN' })),
     AUTO:        () => [{ approver_id: Directory.SYSTEM, approver_role: 'SYSTEM', auto: true }],
   };
 

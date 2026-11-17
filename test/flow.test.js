@@ -130,8 +130,23 @@ console.log('✓ cancel gives the days back');
 // --- routing for leads and C-suite
 viewAs('E003');
 pv = ok(run(`apiPreview('', {type_id:'LT-PL',start_date:'2026-12-07',end_date:'2026-12-08'})`), 'ankita');
-assert.strictEqual(pv.approvers.map((a) => a.name).join(), ['Vikram'].join());
-console.log('✓ team lead Ankita → Vikram only');
+assert.strictEqual(pv.approvers.map((a) => a.name + ':' + a.role).join(), 'Vikram:CSUITE,Test Employee:ADMIN');
+console.log('✓ team lead Ankita → Vikram, plus the admin (ADMIN_EMAILS) in parallel');
+
+// --- the admin can approve too: first approval wins, the C-suite row is closed as no longer needed
+const rAdm = ok(run(`apiSubmit('', {type_id:'LT-PL',start_date:'2026-12-10',end_date:'2026-12-10',reason:'admin test'})`), 'ankita submit');
+assert.strictEqual(rAdm.approvals.map((a) => a.approver_id + ':' + a.role + ':' + a.decision).join(), 'E001:CSUITE:PENDING,E903:ADMIN:PENDING');
+viewAs('E903');
+assert.ok(ok(run("apiBootstrap('')"), 'admin boot').inbox.waiting.some((r) => r.req_id === rAdm.req_id), 'request is in the admin inbox');
+const admDone = ok(run(`apiDecide('', '${rAdm.req_id}','APPROVED','ok from admin')`), 'admin approves');
+assert.strictEqual(admDone.status, 'APPROVED'); assert.strictEqual(admDone.final_by, 'E903');
+// switching the rule off in the sheet removes the admin from new requests; setupDatabase never re-adds an existing row
+run(`Db.table('ApprovalFlow').update('F6', { active: false })`); env.webapp = false; run('setupDatabase()'); env.webapp = true; run('Db.refresh()');
+assert.strictEqual(run("Db.table('ApprovalFlow').get('F6').active"), false);
+viewAs('E003');
+assert.strictEqual(ok(run(`apiPreview('', {type_id:'LT-PL',start_date:'2026-12-21',end_date:'2026-12-21'})`), 'ankita off').approvers.map((a) => a.name).join(), 'Vikram');
+run(`Db.table('ApprovalFlow').update('F6', { active: true })`); run('Db.refresh()');
+console.log('✓ admin approved', rAdm.req_id, '(ADMIN rule); unticking F6 in ApprovalFlow switches it off');
 viewAs('E001');
 const r5 = ok(run(`apiSubmit('', {type_id:'LT-PL',start_date:'2026-12-09',end_date:'2026-12-09',reason:'z'})`), 'vikram');
 assert.strictEqual(r5.status, 'APPROVED');

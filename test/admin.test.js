@@ -69,7 +69,7 @@ console.log('✓ added', added.person.emp_id, 'Meera Rao → Science, manager Ga
 const pv = ok(run(`apiPreview('${S.ADMIN}', {type_id:'LT-PL',start_date:'2026-11-26',end_date:'2026-11-26'})`), 'admin preview');
 run(`apiSetViewAs('${S.ADMIN}', '${added.person.emp_id}')`);
 const mpv = ok(run(`apiPreview('${S.ADMIN}', {type_id:'LT-PL',start_date:'2026-11-26',end_date:'2026-11-26'})`), 'meera preview');
-assert.strictEqual(mpv.approvers.map((a) => a.name).join(' + '), 'Gaurav + Guneet');
+assert.strictEqual(mpv.approvers.map((a) => a.name).join(' + '), 'Gaurav + Guneet + Leave Admin');
 run(`apiSetViewAs('${S.ADMIN}', '')`);
 console.log('✓ new person\'s leave goes to', mpv.approvers.map((a) => a.name).join(' + '));
 

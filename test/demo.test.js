@@ -37,11 +37,11 @@ assert.strictEqual(bal(intern, 'PL'), 6.5); assert.strictEqual(bal(intern, 'SL')
 
 // Approval routing per persona
 const approvers = (k) => run(`apiPreview('${S[k]}', {type_id:'LT-PL',start_date:'2026-11-26',end_date:'2026-11-26'})`).data;
-assert.strictEqual(approvers('EMPLOYEE').approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO');
-assert.strictEqual(approvers('INTERN').approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO');
-assert.strictEqual(approvers('LEAD').approvers.map((a) => a.name).join(' + '), 'Test CXO');
+assert.strictEqual(approvers('EMPLOYEE').approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO + Leave Admin');
+assert.strictEqual(approvers('INTERN').approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO + Leave Admin');
+assert.strictEqual(approvers('LEAD').approvers.map((a) => a.name).join(' + '), 'Test CXO + Leave Admin');
 assert.ok(approvers('CXO').autoApprove);
-console.log('✓ routing: Employee/Intern → Test Lead + Test CXO; Team Lead → Test CXO; CXO auto');
+console.log('✓ routing: Employee/Intern → Test Lead + Test CXO + Leave Admin; Team Lead → Test CXO + Leave Admin; CXO auto');
 
 // Full flow
 const r1 = run(`apiSubmit('${S.INTERN}', {type_id:'LT-SL',start_date:'2026-11-26',end_date:'2026-11-26',reason:'Fever'})`).data;

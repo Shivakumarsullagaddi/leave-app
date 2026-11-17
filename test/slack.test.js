@@ -10,8 +10,8 @@ props.SLACK_VERIFICATION_TOKEN = 'verify-me';
 props.APP_URL = 'https://script.google.com/macros/s/TEST/exec';
 run("Db.table('Settings').update('SLACK_ENABLED', { value: 'TRUE' })");
 
-// Slack's directory: U-EMP = Test Employee (E903), U-LEAD = Test Lead (E902), U-CXO = Test CXO (E901)
-const SLACK = { 'U-EMP': 'shivakumar.u@darukaa.com', 'U-LEAD': 'shivakumarullagaddi56@gmail.com', 'U-CXO': 'shivakumarullagaddi855@gmail.com' };
+// Slack's directory: U-EMP = Test Employee (E903), U-LEAD = Test Lead (E902), U-CXO = Test CXO (E901), U-ADM = Leave Admin (E900)
+const SLACK = { 'U-EMP': 'shivakumar.u@darukaa.com', 'U-LEAD': 'shivakumarullagaddi56@gmail.com', 'U-CXO': 'shivakumarullagaddi855@gmail.com', 'U-ADM': 'admin@leavedesk.test' };
 env.slackReply = (method, p) => {
   if (method === 'users.info') return SLACK[p.user] ? { ok: true, user: { profile: { email: SLACK[p.user] } } } : { ok: false, error: 'user_not_found' };
   if (method === 'users.lookupByEmail') { const id = Object.keys(SLACK).find((k) => SLACK[k] === p.email); return id ? { ok: true, user: { id } } : { ok: false, error: 'users_not_found' }; }
@@ -115,16 +115,16 @@ assert.ok(req && req.status === 'PENDING' && req.days === 2 && req.reason === 'F
 let upd = last('chat.update');
 assert.strictEqual(upd.payload.channel, 'D-U-EMP', 'update targets the DM channel Slack answered with'); assert.ok(upd.payload.ts, 'update has a ts');
 const filed = flat(upd.payload.blocks);
-assert.ok(new RegExp(req.req_id).test(filed) && /Waiting for Test Lead or Test CXO — either one is enough/.test(filed), filed);
-assert.ok(/⏳ \*Test Lead\* · Team Lead · waiting\\n⏳ \*Test CXO\* · C-suite · waiting/.test(filed) && /\*Working days\*\\n2 days/.test(filed), filed);
-assert.ok(/Either approval is enough/.test(filed) && /approvers have been told/.test(filed) && /sent 2026-11-16/.test(filed), filed);
-const approverCards = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-LEAD' || c.payload.channel === 'U-CXO');
-assert.strictEqual(approverCards.length, 2, 'lead and CXO each get a card');
+assert.ok(new RegExp(req.req_id).test(filed) && /Waiting for Test Lead, Test CXO or Leave Admin — any one is enough/.test(filed), filed);
+assert.ok(/⏳ \*Test Lead\* · Team Lead · waiting\\n⏳ \*Test CXO\* · C-suite · waiting\\n⏳ \*Leave Admin\* · Admin · waiting/.test(filed) && /\*Working days\*\\n2 days/.test(filed), filed);
+assert.ok(/Any one approval is enough/.test(filed) && /approvers have been told/.test(filed) && /sent 2026-11-16/.test(filed), filed);
+const approverCards = calls('chat.postMessage').filter((c) => ['U-LEAD', 'U-CXO', 'U-ADM'].indexOf(c.payload.channel) !== -1);
+assert.strictEqual(approverCards.length, 3, 'lead, CXO and admin each get a card');
 assert.ok(approverCards.every((c) => /your decision needed/.test(flat(c.payload.blocks)) && /"action_id":"approve"/.test(flat(c.payload.blocks))), 'approver cards have buttons');
 const leadText = flat(approverCards.find((c) => c.payload.channel === 'U-LEAD').payload.blocks);
-assert.ok(/\*Requested by\*\\nTest Employee · Test Team/.test(leadText) && /\*Approvers\*\\n⏳ Test Lead \(Team Lead\)\\n⏳ Test CXO \(C-suite\)/.test(leadText), leadText);
-assert.ok(/Your decision is needed/.test(leadText) && /\*Status\*\\n⏳ Waiting for Test Lead and Test CXO/.test(leadText), leadText);
-console.log('✓ Send request → card at once → filed as', req.req_id, '→ card updated; lead + CXO got Approve/Reject cards');
+assert.ok(/\*Requested by\*\\nTest Employee · Test Team/.test(leadText) && /\*Approvers\*\\n⏳ Test Lead \(Team Lead\)\\n⏳ Test CXO \(C-suite\)\\n⏳ Leave Admin \(Admin\)/.test(leadText), leadText);
+assert.ok(/Your decision is needed/.test(leadText) && /\*Status\*\\n⏳ Waiting for Test Lead, Test CXO and Leave Admin \(any one is enough\)/.test(leadText), leadText);
+console.log('✓ Send request → card at once → filed as', req.req_id, '→ card updated; lead + CXO + admin got Approve/Reject cards');
 
 // ---- bad input stays in the modal; overlap is reported on the card, nothing saved
 out = asJson(submission('2026-11-25', '2026-11-24'));
@@ -249,10 +249,23 @@ assert.ok(/Waiting for your decision \(1\)/.test(homeText) && /\*Requested by\*\
 assert.ok(/Hi \*Test Lead\* · Team Lead · Test Team · 2026/.test(homeText) && /`██████████`  \*20 of 20\* days left/.test(homeText), homeText);
 // the requester's own list shows status + id under each request
 const empHome = asJson(slash('requests', 'U-EMP', { channel_id: 'D-U-EMP' }));
-assert.ok(/\*Status\*\\n⏳ Waiting for Test Lead or Test CXO — either one is enough/.test(flat(empHome.blocks)) && /\*Status\*\\n❌ Rejected by Test CXO/.test(flat(empHome.blocks)), flat(empHome.blocks));
+assert.ok(/\*Status\*\\n⏳ Waiting for Test Lead, Test CXO or Leave Admin — any one is enough/.test(flat(empHome.blocks)) && /\*Status\*\\n❌ Rejected by Test CXO/.test(flat(empHome.blocks)), flat(empHome.blocks));
 out = interact({ type: 'block_actions', user: { id: 'U-LEAD' }, trigger_id: 'trig-3', actions: [{ action_id: 'apply', value: 'home' }], container: { type: 'view' } });
 assert.strictEqual(last('views.open').payload.view.private_metadata, 'E902', 'lead applies as themselves');
 console.log('✓ App Home: balances + inbox + Request leave; republished after the new request');
+
+// ---- the admin approves from Slack: their card has buttons; first approval wins
+const decReq = requestsOf('E903').find((r) => r.start_date === '2026-12-07');
+const admCard = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-ADM' && new RegExp(decReq.req_id).test(flat(c.payload.blocks))).at(-1);
+const admBtn = admCard.payload.blocks.find((b) => b.type === 'actions').elements.find((e) => e.action_id === 'approve');
+interact({ type: 'block_actions', user: { id: 'U-ADM' }, trigger_id: 'trig-4', actions: [admBtn], container: { type: 'message', channel_id: 'D-ADM', message_ts: 'ts-adm' } });
+asJson(decide(JSON.parse(last('views.open').payload.view.private_metadata), 'Approved by admin', 'U-ADM'));
+run('slackRunJobs()');
+assert.strictEqual(requestsOf('E903').find((r) => r.req_id === decReq.req_id).status, 'APPROVED');
+assert.ok(/You approved Test Employee’s leave/.test(flat(last('chat.update').payload.blocks)) &&
+  /✅ \*Leave Admin\* · Admin · approved/.test(flat(last('chat.update').payload.blocks)), flat(last('chat.update').payload.blocks));
+assert.ok(/\*Status\*\\n✅ Approved by Leave Admin/.test(flat(asJson(slash('requests', 'U-EMP', { channel_id: 'D-U-EMP' })).blocks)));
+console.log('✓ Leave Admin approved', decReq.req_id, 'from Slack');
 
 // ---- moving a Slack ID to another row in the sheet re-points that Slack user on the next refresh
 run("Db.table('Employees').update('E903', { slack_user_id: '' }); Db.table('Employees').update('E901', { slack_user_id: 'U-EMP' })");

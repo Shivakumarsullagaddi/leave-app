@@ -25,7 +25,8 @@
       p.autoApprove
         ? Notice('good', 'Approved automatically', 'C-suite leave is approved and logged straight away.')
         : Notice('info', 'Who will be asked',
-          p.approvers.map((a) => a.name + ' (' + fmt.role(a.role) + ')').join(' and ') + (p.approvers.length > 1 ? ' at the same time. Either approval is enough.' : '.')));
+          p.approvers.map((a) => a.name + ' (' + fmt.role(a.role) + ')').join(', ').replace(/, ([^,]*)$/, ' and $1') +
+          (p.approvers.length > 1 ? ' at the same time. ' + (p.approvers.length > 2 ? 'Any one' : 'Either') + ' approval is enough.' : '.')));
   }
 
   LD.views.apply = {

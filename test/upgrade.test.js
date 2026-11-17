@@ -16,6 +16,14 @@ const clearRows = (tab, test) => {
 clearRows('Teams', (r) => r[0] === 'T-TEST');
 clearRows('Employees', (r) => /^E90/.test(r[0]));
 clearRows('LeaveBalances', (r) => /^E90/.test(r[1]));
+clearRows('ApprovalFlow', (r) => r[0] === 'F5' || r[0] === 'F6');   // sheets made before the ADMIN approver rule
+run("Db.refresh(); Db.table('ApprovalFlow').update('F2', { active: false })");   // an admin's own edit must survive
+run('setupDatabase()');
+run('Db.refresh()');
+assert.strictEqual(run("Db.table('ApprovalFlow').where(f => f.approver_rule === 'ADMIN').map(f => f.flow_id + ':' + f.requester_role).join()"), 'F5:EMPLOYEE,F6:LEAD');
+assert.strictEqual(run("Db.table('ApprovalFlow').get('F2').active"), false, 'existing rows are never overwritten');
+run("Db.table('ApprovalFlow').update('F2', { active: true })");
+console.log('✓ setupDatabase adds the ADMIN approver rows (F5, F6) to an older sheet and leaves existing rows alone');
 run(`Db.refresh();
   Db.table('Employees').update('E002',{email:'shivakumarullagaddi855@gmail.com'});
   Db.table('Employees').update('E004',{email:'shivakumarullagaddi56@gmail.com'});
@@ -34,6 +42,6 @@ assert.strictEqual(run("Db.table('Employees').get('E011').email"), 'shiva@daruka
 assert.strictEqual(run("Db.table('LeaveBalances').where(b=>/^E90/.test(b.emp_id)).length"), 10);
 P.env.webapp = true;
 const pv = run(`apiPreview('', {type_id:'LT-PL',start_date:'2026-11-26',end_date:'2026-11-26'})`).data;
-assert.strictEqual(pv.approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO');
+assert.strictEqual(pv.approvers.map((a) => a.name).join(' + '), 'Test Lead + Test CXO', 'the admin is the requester here, so is never their own approver');
 console.log('✓ old sheet upgraded: Test Team, people, balances; Test Employee →', pv.approvers.map((a) => a.name).join(' + '));
 console.log('UPGRADE TEST PASSED');

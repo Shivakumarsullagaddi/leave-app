@@ -17,9 +17,11 @@ Leave Desk is Darukaa.Earth's internal leave-management app on Google Workspace.
 
 | Who applies | Who is asked | Outcome |
 |---|---|---|
-| Employee / Intern | Team Lead **and** team C-suite, in parallel | First approval approves; any rejection rejects, until the leave starts |
-| Team Lead | Their team's C-suite | Single approver |
+| Employee / Intern | Team Lead **and** team C-suite **and** the admin, in parallel | First approval approves; any rejection rejects, until the leave starts |
+| Team Lead | Their team's C-suite **and** the admin, in parallel | Same rule |
 | C-suite | Nobody | Auto-approved |
+
+The admin is everyone listed in Settings → `ADMIN_EMAILS` who is an active employee (after `setupDemo` that is Leave Admin, E900). It comes from ApprovalFlow rows **F5** (EMPLOYEE, rule `ADMIN`) and **F6** (LEAD, rule `ADMIN`). Untick `active` on those rows to stop asking the admin. `setupDatabase` adds F5/F6 to an older sheet once and never overwrites an existing row. Requests filed before F5/F6 existed have no admin approval row.
 
 - Over quota is allowed with a warning; the extra days are Loss of Pay (LOP).
 - Weekends and Holidays-tab dates are not counted. Half day = 0.5.
@@ -105,6 +107,8 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 4. **Timeout work**: first-contact linking no longer creates a trigger inside the Slack request; every phase is timed and logged (`SlackHandler.timing()` in the Executions log). Explanation and remaining causes in `docs/slack-integration.md`.
 5. **Docs folder** created; project memory saved for Claude Code.
 6. **Apply form (later the same day):** date pickers start empty, every pick redraws the form with exact dates + working days + balance left (`views.update`, `dispatch_action`), over-quota warning before Send, **Half day** checkbox (0.5, first day only). Auto-approved cards say "Approved automatically". Slack IDs moved or removed in the sheet are re-pointed or forgotten on refresh (`SlackCache.forgetMovedLinks`).
+
+2026-11-17: **Admin can approve.** New ApprovalFlow rule `ADMIN` (`ApprovalRouter.RULES.ADMIN`), approver role `ADMIN` shown as "Admin", seed rows F5/F6, `Setup.missingOnly` tops up ApprovalFlow as well as Settings. Wording says "any one approval is enough" when three or more are asked.
 
 ## 7. Next steps (in order)
 
