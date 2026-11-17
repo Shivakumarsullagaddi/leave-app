@@ -21,7 +21,7 @@
         h('div', { class: 'stat' }, h('b', null, fmt.num(p.paid)), h('span', null, 'From balance')),
         h('div', { class: 'stat lop' }, h('b', null, fmt.num(p.lop)), h('span', null, 'Loss of Pay'))),
       p.overQuota ? Notice('warn', 'You are over your quota',
-        'You have ' + fmt.num(p.available) + ' day(s) left. You can still send this; if approved, ' + fmt.num(p.lop) + ' day(s) will be Loss of Pay.') : null,
+        'You have ' + fmt.num(p.available) + ' day(s) left' + (p.pending ? ', and ' + fmt.num(p.pending) + ' of them are already asked for in requests waiting for approval' : '') + '. You can still send this; if approved, ' + fmt.num(p.lop) + ' day(s) will be Loss of Pay.') : null,
       p.autoApprove
         ? Notice('good', 'Approved automatically', 'C-suite leave is approved and logged straight away.')
         : Notice('info', 'Who will be asked',

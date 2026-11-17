@@ -157,7 +157,7 @@ const DB_SCHEMA = [
   },
   {
     name: 'LeaveBalances', group: 'txn', editedBy: 'System (adjust via Admin page)',
-    purpose: 'One row per person × leave type × year. available = accrued + adjusted − used − pending.',
+    purpose: 'One row per person × leave type × year. available = accrued + adjusted − used (pending days are not taken off until approved).',
     columns: [
       col_('bal_id', 'id', 'Unique ID, e.g. B0001.'),
       col_('emp_id', 'ref', 'Employees.emp_id', { ref: 'Employees.emp_id' }),
@@ -167,7 +167,7 @@ const DB_SCHEMA = [
       col_('adjusted', 'number', 'Manual +/− by admin. Every change is in AuditLog.'),
       col_('used', 'number', 'Paid days taken (approved requests).'),
       col_('pending', 'number', 'Paid days held by pending requests.'),
-      col_('available', 'number', 'accrued + adjusted − used − pending. Written by the app.'),
+      col_('available', 'number', 'accrued + adjusted − used. Pending days stay in until approved. Written by the app.'),
       col_('last_accrual', 'id', 'Last period credited, e.g. 2026-Q4.'),
       col_('updated_at', 'datetime', 'Row last changed.'),
     ],

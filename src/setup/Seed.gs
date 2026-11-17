@@ -208,7 +208,7 @@ function buildSeed_(nowStr) {
 
   const balanceRows = Object.keys(balances).map(function (k, i) {
     const b = balances[k];
-    b.available = b.accrued + b.adjusted - b.used - b.pending;
+    b.available = b.accrued + b.adjusted - b.used;
     return Object.assign({ bal_id: 'B' + ('000' + (i + 1)).slice(-4) }, b);
   });
 

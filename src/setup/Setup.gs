@@ -196,6 +196,8 @@ const SetupEngine = (() => {
       SheetFormatter.removeEmptyTabs(ss);
 
       Db.refresh();
+      const recalculated = BalanceService.recalcAll();
+      if (recalculated) summary.push('LeaveBalances · available recalculated on ' + recalculated + ' rows (pending days no longer deducted)');
       Audit.log({ actor: SetupUi.user(), action: 'SETUP', entity: 'ALL', entity_id: 'ALL',
         new_value: 'DB v' + LD_CONFIG.DB_VERSION, reason: opts.reset ? 'Reset to dummy data' : 'Setup run' });
 

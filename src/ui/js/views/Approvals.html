@@ -15,7 +15,7 @@
     return h('div', { class: 'stack' },
       r.status === 'APPROVED' ? Notice('good', 'Already approved by ' + r.final_by_name,
         'You can add your approval for the record, or reject it until the leave starts.') : null,
-      b ? h('p', { class: 'small muted' }, r.employee.name + ' has ' + fmt.num(b.available) + ' ' + r.type_name + ' day(s) left after pending requests.') : null,
+      b ? h('p', { class: 'small muted' }, r.employee.name + ' has ' + fmt.num(b.available) + ' ' + r.type_name + ' day(s) left' + (b.pending ? ' (' + fmt.num(b.pending) + ' waiting for approval, including this one)' : '') + '.') : null,
       h('label', { class: 'field', for: id }, h('span', null, 'Your comment'), comment),
       h('div', { class: 'row' },
         ActionButton('Approve', 'good', async () => {

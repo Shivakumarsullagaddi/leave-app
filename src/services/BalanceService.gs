@@ -1,7 +1,12 @@
 /**
  * BalanceService.gs — leave balances (LeaveBalances tab).
  *
- *   available = accrued + adjusted − used − pending
+ *   available = accrued + adjusted − used        (what the person sees as "left")
+ *   free      = available − pending              (what a NEW request can still use)
+ *
+ * Days in a request waiting for approval are NOT taken off the balance; they are shown
+ * as "waiting for approval" and only leave the balance when the request is approved.
+ * They are still reserved, so two pending requests can't both spend the same days.
  *
  * A request moves days through:  hold (pending) → commit (used)
  *                                 hold (pending) → release        (rejected / cancelled)
@@ -10,7 +15,8 @@
 const BalanceService = (() => {
   const n = (v) => Number(v) || 0;
   const table = () => Db.table('LeaveBalances');
-  const available = (b) => n(b.accrued) + n(b.adjusted) - n(b.used) - n(b.pending);
+  const available = (b) => n(b.accrued) + n(b.adjusted) - n(b.used);
+  const free = (b) => available(b) - n(b.pending);
 
   const find = (empId, typeId, year) => table().find((b) =>
     b.emp_id === empId && b.type_id === typeId && Number(b.year) === Number(year));
@@ -40,10 +46,10 @@ const BalanceService = (() => {
 
   /** How many of `days` the balance covers; the rest is Loss of Pay. */
   function split(empId, typeId, year, days) {
-    const b = find(empId, typeId, year);
-    const free = b ? Math.max(0, available(b)) : 0;
-    const paid = Math.min(days, free);
-    return { available: free, paid: paid, lop: days - paid };
+    const b = find(empId, typeId, year) || {};
+    const room = Math.max(0, free(b));
+    const paid = Math.min(days, room);
+    return { available: available(b), pending: n(b.pending), free: room, paid: paid, lop: days - paid };
   }
 
   /** One entry per active leave type, for the dashboard. */
@@ -99,5 +105,15 @@ const BalanceService = (() => {
     return table().update(b.bal_id, next);
   }
 
-  return { hold, release, commit, revert, split, summary, ensureYear, adjust };
+  /** Rewrites the stored `available` column where it is out of date (setupDatabase runs this). */
+  function recalcAll() {
+    let fixed = 0;
+    table().all().forEach((b) => {
+      const right = available(b);
+      if (n(b.available) !== right) { table().update(b.bal_id, { available: right }); fixed++; }
+    });
+    return fixed;
+  }
+
+  return { hold, release, commit, revert, split, summary, ensureYear, adjust, recalcAll };
 })();

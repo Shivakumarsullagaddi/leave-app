@@ -106,13 +106,11 @@ const SlackJobs = (() => {
 
   const RUN = {
     submit(job) {
-      const link = SlackBot.prop('APP_URL');
       try {
         const emp = Directory.employee(job.emp_id);
         if (!emp) throw Errors.notRegistered('');
         const saved = LeaveService.submit(emp, job.input);
-        const card = cardOf(saved, { link: link ? link + '?view=requests&req=' + encodeURIComponent(saved.req_id) : '' });
-        if (saved.status === 'PENDING') card.note = '📬 Your approvers have been told. You will get a message here as soon as someone decides.';
+        const card = cardOf(saved);
         show(job, 'Leave request ' + saved.req_id + ': ' + SlackCards.statusText(saved.status, card.approvers), SlackCards.requestCard(card));
       } catch (err) {
         if (!(err instanceof AppError)) console.error('SlackJobs: submit: ' + (err.stack || err));

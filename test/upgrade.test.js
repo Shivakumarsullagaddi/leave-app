@@ -18,7 +18,13 @@ clearRows('Employees', (r) => /^E90/.test(r[0]));
 clearRows('LeaveBalances', (r) => /^E90/.test(r[1]));
 clearRows('ApprovalFlow', (r) => r[0] === 'F5' || r[0] === 'F6');   // sheets made before the ADMIN approver rule
 run("Db.refresh(); Db.table('ApprovalFlow').update('F2', { active: false })");   // an admin's own edit must survive
+// an older sheet stored available = accrued + adjusted − used − pending; setupDatabase recalculates it
+run("Db.table('LeaveBalances').update('B0001', { pending: 3, available: 0 })");
 run('setupDatabase()');
+run('Db.refresh()');
+const b1 = run("Db.table('LeaveBalances').get('B0001')");
+assert.strictEqual(b1.available, b1.accrued + b1.adjusted - b1.used, 'pending days are no longer taken off the stored balance');
+run("Db.table('LeaveBalances').update('B0001', { pending: 0 })");
 run('Db.refresh()');
 assert.strictEqual(run("Db.table('ApprovalFlow').where(f => f.approver_rule === 'ADMIN').map(f => f.flow_id + ':' + f.requester_role).join()"), 'F5:EMPLOYEE,F6:LEAD');
 assert.strictEqual(run("Db.table('ApprovalFlow').get('F2').active"), false, 'existing rows are never overwritten');

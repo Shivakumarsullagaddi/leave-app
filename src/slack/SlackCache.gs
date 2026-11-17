@@ -37,6 +37,16 @@ const SlackCache = (() => {
 
   const LINKED = 'SLACK_LINKED_USERS';
 
+  /** Who a new request from this person goes to, so Slack can show it before anything is filed. */
+  function approversFor(e, names) {
+    try {
+      return ApprovalRouter.route(e).map((a) => (a.auto ? { auto: true } : { name: names[a.approver_id] || a.approver_id, role: a.approver_role, decision: 'PENDING' }));
+    } catch (err) {
+      console.error('SlackCache: approvers for ' + e.emp_id + ': ' + err);
+      return [];
+    }
+  }
+
   /** Builds snapshots for the given employees (or everyone active) from one read of each tab. */
   function build(empIds) {
     const year = DateUtil.year(DateUtil.today());
@@ -64,7 +74,7 @@ const SlackCache = (() => {
           const b = balances.find((x) => x.emp_id === e.emp_id && x.type_id === t.type_id) || {};
           const n = (v) => Number(v) || 0;
           return { type_id: t.type_id, name: t.name, code: t.code, quota: n(b.accrued) + n(b.adjusted),
-            used: n(b.used), pending: n(b.pending), available: n(b.accrued) + n(b.adjusted) - n(b.used) - n(b.pending) };
+            used: n(b.used), pending: n(b.pending), available: n(b.accrued) + n(b.adjusted) - n(b.used) };
         }),
         requests: requests.filter((r) => r.emp_id === e.emp_id)
           .sort((a, b) => (a.start_date < b.start_date ? 1 : -1)).slice(0, 10)
@@ -72,6 +82,7 @@ const SlackCache = (() => {
         inbox: requests.filter((r) => (approvalsByReq[r.req_id] || []).some((a) => a.approver_id === e.emp_id && DecisionPolicy.canAct(r, a)))
           .sort((a, b) => (a.start_date < b.start_date ? -1 : 1))
           .map((r) => brief(r, names, typeName, approvalsByReq)),
+        approvers: approversFor(e, names),
       };
       entries[empKey(e.emp_id)] = JSON.stringify(snap);
       if (e.slack_user_id) entries[userKey(e.slack_user_id)] = e.emp_id;

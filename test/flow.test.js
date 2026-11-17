@@ -64,8 +64,8 @@ const r1 = ok(run(`apiSubmit('', {type_id:'LT-PL',start_date:'2026-11-19',end_da
 assert.strictEqual(r1.status, 'PENDING');
 assert.strictEqual(r1.approvals.length, 2);
 assert.strictEqual(bal('E903', 'LT-PL').pending, 3);
-assert.strictEqual(bal('E903', 'LT-PL').available, 17);
-console.log('✓ submitted', r1.req_id, '· 3 days held · email to', env.mail.at(-1).to);
+assert.strictEqual(bal('E903', 'LT-PL').available, 20, 'pending days are not taken off the balance');
+console.log('✓ submitted', r1.req_id, '· 3 days waiting for approval, balance still 20 · email to', env.mail.at(-1).to);
 refused(run(`apiSubmit('', {type_id:'LT-PL',start_date:'2026-11-20',end_date:'2026-11-20'})`), 'CONFLICT', 'overlapping dates');
 
 // --- Test Lead approves first
@@ -118,10 +118,11 @@ console.log('✓ locked request leaves the inbox; Guneet waiting:', boot.inbox.w
 // --- cancel
 viewAs('E011');
 const r4 = ok(run(`apiSubmit('', {type_id:'LT-PL',start_date:'2026-12-14',end_date:'2026-12-15',reason:'y'})`), 'r4');
-const before = bal('E011', 'LT-PL').available;
+const before = bal('E011', 'LT-PL');
 const c = ok(run(`apiCancel('', '${r4.req_id}')`), 'cancel');
 assert.strictEqual(c.status, 'CANCELLED');
-assert.strictEqual(bal('E011', 'LT-PL').available, before + 2);
+assert.strictEqual(bal('E011', 'LT-PL').available, before.available, 'balance never moved');
+assert.strictEqual(bal('E011', 'LT-PL').pending, before.pending - 2, 'the 2 waiting days are released');
 assert.ok(c.approvals.every((a) => a.decision === 'NO_ACTION'));
 viewAs('E903');
 refused(run(`apiCancel('', '${r1.req_id}')`), 'CONFLICT', 'cancel an approved request');
@@ -195,7 +196,7 @@ run("Db.table('LeaveBalances').all()").forEach((b) => {
   const sum = (s) => mine.filter((r) => r.status === s).reduce((t, r) => t + r.paid_days, 0);
   assert.strictEqual(b.used, sum('APPROVED'), b.bal_id + ' used');
   assert.strictEqual(b.pending, sum('PENDING'), b.bal_id + ' pending');
-  assert.strictEqual(b.available, b.accrued + b.adjusted - b.used - b.pending, b.bal_id + ' available');
+  assert.strictEqual(b.available, b.accrued + b.adjusted - b.used, b.bal_id + ' available');
 });
 const ids = env.book.getSheetByName('LeaveRequests').getRange(2, 1, 40, 1).getValues().map((r) => r[0]).filter(Boolean);
 assert.strictEqual(ids.length, reqs.length, 'new rows are written right under existing data');

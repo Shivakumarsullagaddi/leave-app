@@ -24,6 +24,7 @@ Leave Desk is Darukaa.Earth's internal leave-management app on Google Workspace.
 The admin is everyone listed in Settings → `ADMIN_EMAILS` who is an active employee (after `setupDemo` that is Leave Admin, E900). It comes from ApprovalFlow rows **F5** (EMPLOYEE, rule `ADMIN`) and **F6** (LEAD, rule `ADMIN`). Untick `active` on those rows to stop asking the admin. `setupDatabase` adds F5/F6 to an older sheet once and never overwrites an existing row. Requests filed before F5/F6 existed have no admin approval row.
 
 - Over quota is allowed with a warning; the extra days are Loss of Pay (LOP).
+- **Balance is only reduced on approval.** `available = accrued + adjusted − used`. Days in requests waiting for approval are shown as "waiting for approval" and do not reduce "days left". They are still reserved for the LOP split (`free = available − pending`), so two pending requests can't spend the same days. Rejection or cancellation releases them; the shown balance never moved.
 - Weekends and Holidays-tab dates are not counted. Half day = 0.5.
 - Full-time: 20 Paid + 12 Sick per year, credited quarterly. Interns and contractors prorated by contract months.
 - No carry-forward.
@@ -109,6 +110,8 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 6. **Apply form (later the same day):** date pickers start empty, every pick redraws the form with exact dates + working days + balance left (`views.update`, `dispatch_action`), over-quota warning before Send, **Half day** checkbox (0.5, first day only). Auto-approved cards say "Approved automatically". Slack IDs moved or removed in the sheet are re-pointed or forgotten on refresh (`SlackCache.forgetMovedLinks`).
 
 2026-11-17: **Admin can approve.** New ApprovalFlow rule `ADMIN` (`ApprovalRouter.RULES.ADMIN`), approver role `ADMIN` shown as "Admin", seed rows F5/F6, `Setup.missingOnly` tops up ApprovalFlow as well as Settings. Wording says "any one approval is enough" when three or more are asked.
+
+2026-11-17 (later): **Balance only cut on approval** (`BalanceService.available`, `recalcAll()` run by `setupDatabase` fixes stored values). **Approvers known up front**: `SlackCache` stores each person's approvers (`ApprovalRouter.route`), the Apply form shows a "Who approves" block, and the requester's first card is already complete (status, days, approvers); the background job only adds the request ID. "Open in Leave Desk" removed from the requester's card (still on approver notification cards). "Your approvers have been told" line removed.
 
 ## 7. Next steps (in order)
 

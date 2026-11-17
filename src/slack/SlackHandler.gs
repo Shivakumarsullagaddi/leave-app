@@ -156,12 +156,19 @@ const SlackHandler = (() => {
     if (!input.end_date) { const errors = { end: 'Pick the last day. For one day, pick the same date.' }; return { response_action: 'errors', errors: errors }; }
     if (input.end_date < input.start_date) { const errors = { end: 'The last day is before the first day.' }; return { response_action: 'errors', errors: errors }; }
     const empId = p.view.private_metadata;
-    const snap = SlackCache.snapshot(empId) || { name: p.user.name || 'You', team: '', role_level: '', emp_type: '' };
+    const snap = SlackCache.snapshot(empId);
     const card = {
-      employee: snap.name, role: SlackCards.personRole(snap), team: snap.team, type: v.type.v.selected_option.text.text,
-      start_date: input.start_date, end_date: input.end_date, reason: input.reason, status: '⏳ Sending to Leave Desk…', approvers: [],
+      employee: snap ? snap.name : (p.user.name || 'You'), role: snap ? SlackCards.personRole(snap) : '', team: snap ? snap.team : '',
+      type: v.type.v.selected_option.text.text, start_date: input.start_date, end_date: input.end_date, reason: input.reason,
+      status: '⏳ Sending to Leave Desk…', approvers: [], submitted_at: DateUtil.now(),
     };
     if (input.half_day) card.days = 0.5;
+    // The cache already knows the days and the approvers, so the first card is the real one; the job only adds the ID.
+    if (snap && snap.approvers) {
+      const q = SlackCards.quote(snap, s);
+      const auto = snap.approvers.some((a) => a.auto);
+      Object.assign(card, { days: q.days, lop: q.lop, status: auto ? 'APPROVED' : 'PENDING', approvers: auto ? [] : snap.approvers.filter((a) => !a.auto) });
+    }
     let posted = null;
     try {
       posted = SlackBot.postMessage(p.user.id, 'Leave request ' + SlackCards.dateRange(input.start_date, input.end_date), SlackCards.requestCard(card));

@@ -44,13 +44,13 @@ const LeaveService = (() => {
       Object.assign({ halfDay: req.half_day }, Catalog.calendar()));
     if (days <= 0) throw Errors.invalid('These dates are all weekends or holidays, so no leave is needed.');
     const split = BalanceService.split(emp.emp_id, req.type_id, DateUtil.year(req.start_date), days);
-    return { req, type, days, paid: split.paid, lop: split.lop, available: split.available, approvers: ApprovalRouter.route(emp) };
+    return { req, type, days, paid: split.paid, lop: split.lop, available: split.available, pending: split.pending, approvers: ApprovalRouter.route(emp) };
   }
 
   function preview(emp, input) {
     const q = quote(emp, input);
     return {
-      days: q.days, paid: q.paid, lop: q.lop, available: q.available, overQuota: q.lop > 0,
+      days: q.days, paid: q.paid, lop: q.lop, available: q.available, pending: q.pending, overQuota: q.lop > 0,
       autoApprove: q.approvers.some((a) => a.auto),
       approvers: q.approvers.filter((a) => !a.auto).map((a) => ({ name: Directory.name(a.approver_id), role: a.approver_role })),
     };

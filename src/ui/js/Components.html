@@ -48,7 +48,7 @@
         h('span', { style: { width: pct(b.pending), background: 'var(--warn)', opacity: '.55' } })),
       h('div', { class: 'legend' },
         h('span', null, h('i', { style: { background: typeColor(b.type_id) } }), fmt.num(b.used) + ' used'),
-        h('span', null, h('i', { style: { background: 'var(--warn)', opacity: '.55' } }), fmt.num(b.pending) + ' pending'),
+        h('span', null, h('i', { style: { background: 'var(--warn)', opacity: '.55' } }), fmt.num(b.pending) + ' waiting for approval'),
         b.adjusted ? h('span', null, (b.adjusted > 0 ? '+' : '') + fmt.num(b.adjusted) + ' adjusted') : null));
   }
 

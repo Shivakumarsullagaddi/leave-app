@@ -72,7 +72,7 @@ const SlackCards = (() => {
     return '█'.repeat(n) + '░'.repeat(10 - n);
   };
   const balanceBlocks = (snap) => snap.balances.map((b) => {
-    const detail = [b.used ? b.used + ' used' : '', b.pending ? b.pending + ' pending approval' : ''].filter(String).join(' · ');
+    const detail = [b.used ? b.used + ' used' : '', b.pending ? b.pending + ' in requests waiting for approval (not taken off yet)' : ''].filter(String).join(' · ');
     return section('*' + esc(b.name) + '*\n`' + bar(b.available, b.quota) + '`  *' + b.available + ' of ' + b.quota + '* days left' + (detail ? '\n_' + detail + '_' : ''));
   });
   const mainButtons = (appUrl, value) => actions([button('Request leave', 'apply', value || 'card', 'primary')].concat(appUrl ? [linkButton('Open Leave Desk', appUrl)] : []));
@@ -113,7 +113,7 @@ const SlackCards = (() => {
 
   /**
    * The requester's own card. r = { title?, employee, role?, team, type, start_date, end_date, days, lop, reason,
-   *   status (code or text), approvers [{name, role, decision, decided_at}], req_id, submitted_at, note, link }
+   *   status (code or text), approvers [{name, role, decision, decided_at}], req_id, submitted_at, note }
    */
   function requestCard(r) {
     const waiting = pendingOf(r.approvers);
@@ -132,7 +132,6 @@ const SlackCards = (() => {
     blocks.push(section('*Approvers*\n' + (auto ? '✅ Approved automatically — C-suite leave needs no approver.' : approverLines(r.approvers)) +
       (waiting.length > 1 ? '\n_' + (waiting.length > 2 ? 'Any one' : 'Either') + ' approval is enough. Any rejection closes the request._' : '')));
     if (r.note) blocks.push(section(r.note));
-    if (r.link) blocks.push(actions([linkButton('Open in Leave Desk', r.link)]));
     blocks.push(context((r.req_id ? esc(r.req_id) + ' · ' : '') + (r.submitted_at ? 'sent ' + esc(stamp(r.submitted_at)) + ' · ' : '') + appName()));
     return blocks;
   }
@@ -155,6 +154,23 @@ const SlackCards = (() => {
     };
   }
 
+  /** Days a request takes and the Loss of Pay part, from the cached snapshot (same rule as BalanceService.split). */
+  function quote(snap, s) {
+    const days = DateUtil.workingDays(s.start, s.end, Object.assign({ halfDay: s.half }, snap.calendar || {}));
+    const b = snap.balances.find((x) => x.type_id === s.type_id) || { name: '', available: 0, quota: 0, pending: 0 };
+    const room = Math.max(0, b.available - (b.pending || 0));
+    return { days: days, lop: Math.max(0, days - room), balance: b };
+  }
+
+  /** "Jaya (Team Lead), Guneet (C-suite)" for the form; the cache knows them before anything is filed. */
+  function approversLine(snap) {
+    const list = (snap.approvers || []).filter((a) => !a.auto);
+    if ((snap.approvers || []).some((a) => a.auto)) return '✅ *Approved automatically* — C-suite leave needs no approver.';
+    if (!list.length) return '⚠️ No approver is set up for your team yet. Ask the admin.';
+    return list.map((a) => '⏳ *' + esc(a.name) + '* · ' + (ROLE[a.role] || a.role)).join('\n') +
+      (list.length > 1 ? '\n_All are asked at the same time. ' + (list.length > 2 ? 'Any one' : 'Either') + ' approval is enough._' : '');
+  }
+
   /**
    * The "Your request" breakdown under the dates: labelled fields, not one line.
    * Returns blocks (the first carries block_id 'summary').
@@ -163,21 +179,23 @@ const SlackCards = (() => {
     const hint = (t) => [{ type: 'section', block_id: 'summary', text: md(t) }];
     if (!s.start || !s.end) return hint('📅 *Your request*\nPick the first and last day to see how many days you are taking and what will be left.');
     if (s.end < s.start) return hint('⚠️ *The last day is before the first day.* Pick the dates again.');
-    const days = DateUtil.workingDays(s.start, s.end, Object.assign({ halfDay: s.half }, snap.calendar || {}));
+    const q = quote(snap, s);
+    const days = q.days;
     if (days <= 0) return hint('⚠️ *' + esc(dateRange(s.start, s.end)) + '* is all weekend or holiday. No leave is needed.');
     const span = Math.round((DateUtil.parse(s.end) - DateUtil.parse(s.start)) / 86400000) + 1;
     const skipped = s.half ? 0 : span - days;
-    const b = snap.balances.find((x) => x.type_id === s.type_id) || { name: '', available: 0, quota: 0 };
-    const after = b.available - days;
-    const lop = Math.max(0, -after);
+    const b = q.balance;
+    const lop = q.lop;
+    const after = Math.max(0, b.available - (b.pending || 0) - days);
     const when = s.start === s.end ? fmtLong(s.start) : fmtLong(s.start) + '\nto ' + fmtLong(s.end);
     const blocks = [{
       type: 'section', block_id: 'summary', text: md('📅 *Your request*'),
       fields: [
         md('*Dates*\n' + esc(when)),
         md('*Days you are taking*\n' + (s.half ? 'Half day (0.5)' : daysWord(days)) + (skipped > 0 ? '\n_' + daysWord(skipped) + ' weekend/holiday not counted_' : '')),
-        md('*' + esc(b.name) + ' left now*\n' + daysWord(b.available) + ' of ' + b.quota),
-        md('*Left after this request*\n' + (lop > 0 ? '0 days' : daysWord(after))),
+        md('*' + esc(b.name) + ' left now*\n' + daysWord(b.available) + ' of ' + b.quota +
+          (b.pending ? '\n_' + daysWord(b.pending) + ' already asked for, waiting for approval_' : '')),
+        md('*Left if approved*\n' + daysWord(after) + '\n_Nothing is taken off until approval_'),
       ],
     }];
     if (lop > 0) blocks.push(context('⚠️ ' + daysWord(lop) + ' beyond your balance will be *Loss of Pay*.'));
@@ -198,7 +216,8 @@ const SlackCards = (() => {
     if (s.reason) reason.initial_value = s.reason;
     const blocks = [
       section('*' + who(snap) + '* · ' + snap.year),
-      fields(snap.balances.map((b) => [b.name, b.available + ' of ' + b.quota + ' days left' + (b.pending ? ' · ' + b.pending + ' pending' : '')])),
+      fields(snap.balances.map((b) => [b.name, b.available + ' of ' + b.quota + ' days left' + (b.pending ? ' · ' + b.pending + ' waiting for approval' : '')])),
+      { type: 'section', block_id: 'approvers', text: md('*Who approves*\n' + approversLine(snap)) },
       divider(),
       { type: 'input', block_id: 'type', dispatch_action: true, label: plain('Leave type'),
         element: { type: 'static_select', action_id: 'v', options: options, initial_option: chosen } },
@@ -308,5 +327,5 @@ const SlackCards = (() => {
     return reply(meta, 'Leave Desk help', blocks);
   }
 
-  return { fromMessage, requestCard, applyModal, applyState, decideModal, home, balance, requests, help, reply, ephemeral, dateRange, dayText, statusText, personRole, STATUS };
+  return { fromMessage, requestCard, applyModal, applyState, quote, decideModal, home, balance, requests, help, reply, ephemeral, dateRange, dayText, statusText, personRole, STATUS };
 })();

@@ -125,7 +125,7 @@ run("Db.table('LeaveBalances').all()").forEach((b) => {
   const mine = reqs.filter((r) => r.emp_id === b.emp_id && r.type_id === b.type_id);
   const sum = (s) => mine.filter((r) => r.status === s).reduce((t, r) => t + r.paid_days, 0);
   assert.strictEqual(b.used, sum('APPROVED')); assert.strictEqual(b.pending, sum('PENDING'));
-  assert.strictEqual(b.available, b.accrued + b.adjusted - b.used - b.pending);
+  assert.strictEqual(b.available, b.accrued + b.adjusted - b.used);
 });
 console.log('✓ all balances still reconcile');
 console.log('\nADMIN TESTS PASSED');

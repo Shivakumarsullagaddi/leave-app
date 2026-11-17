@@ -47,6 +47,8 @@ assert.ok(/\*Paid \/ Casual Leave\*\\n20 of 20 days left/.test(flat(view.blocks)
 assert.deepStrictEqual(view.blocks.filter((b) => b.type === 'input').map((b) => b.block_id), ['type', 'start', 'end', 'reason'], 'no half-day question until a single day is picked');
 assert.ok(view.blocks.every((b) => b.block_id !== 'start' || !b.element.initial_date), 'dates start empty (Slack would label today as "Today")');
 assert.ok(/Pick the first and last day/.test(flat(view.blocks)), 'summary placeholder');
+const whoText = flat(view.blocks.find((b) => b.block_id === 'approvers'));
+assert.ok(/\*Who approves\*\\n⏳ \*Test Lead\* · Team Lead\\n⏳ \*Test CXO\* · C-suite\\n⏳ \*Leave Admin\* · Admin\\n_All are asked at the same time. Any one approval is enough._/.test(whoText), whoText);
 assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903');
 assert.strictEqual(JSON.parse(props.SLACK_JOBS)[0].kind, 'link');
 run('slackRunJobs()');
@@ -104,8 +106,12 @@ out = asJson(submission('2026-11-18', '2026-11-19'));
 assert.deepStrictEqual(out, { response_action: 'clear' });
 let card = last('chat.postMessage');
 assert.strictEqual(card.payload.channel, 'U-EMP');
-assert.ok(/Your leave request/.test(flat(card.payload.blocks)) && /Sending to Leave Desk…/.test(flat(card.payload.blocks)) && /Family trip/.test(flat(card.payload.blocks)), flat(card.payload.blocks));
-assert.ok(/\*Requested by\*\\nTest Employee · Employee · Test Team/.test(flat(card.payload.blocks)) && /\*Working days\*\\nCounting…/.test(flat(card.payload.blocks)), flat(card.payload.blocks));
+const first = flat(card.payload.blocks);
+assert.ok(/Your leave request/.test(first) && /Family trip/.test(first) && !/Sending to Leave Desk/.test(first), first);
+assert.ok(/\*Requested by\*\\nTest Employee · Employee · Test Team/.test(first) && /\*Working days\*\\n2 days/.test(first), first);
+assert.ok(/Waiting for Test Lead, Test CXO or Leave Admin — any one is enough/.test(first) &&
+  /⏳ \*Test Lead\* · Team Lead · waiting\\n⏳ \*Test CXO\* · C-suite · waiting\\n⏳ \*Leave Admin\* · Admin · waiting/.test(first), 'the first card already names the approvers: ' + first);
+assert.ok(!/Open in Leave Desk/.test(first) && !/approvers have been told/.test(first), first);
 assert.strictEqual(requestsOf('E903').length, 0, 'nothing filed before the job runs');
 assert.ok(env.triggers.some((t) => t.kind === 'once'), 'one-off kick created');
 assert.strictEqual(run('slackRunJobs()'), 1);
@@ -117,7 +123,10 @@ assert.strictEqual(upd.payload.channel, 'D-U-EMP', 'update targets the DM channe
 const filed = flat(upd.payload.blocks);
 assert.ok(new RegExp(req.req_id).test(filed) && /Waiting for Test Lead, Test CXO or Leave Admin — any one is enough/.test(filed), filed);
 assert.ok(/⏳ \*Test Lead\* · Team Lead · waiting\\n⏳ \*Test CXO\* · C-suite · waiting\\n⏳ \*Leave Admin\* · Admin · waiting/.test(filed) && /\*Working days\*\\n2 days/.test(filed), filed);
-assert.ok(/Any one approval is enough/.test(filed) && /approvers have been told/.test(filed) && /sent 2026-11-16/.test(filed), filed);
+assert.ok(/Any one approval is enough/.test(filed) && !/approvers have been told/.test(filed) && !/Open in Leave Desk/.test(filed) && /sent 2026-11-16/.test(filed), filed);
+// the balance is not cut while the request waits; the pending days are shown separately
+const balNow = flat(asJson(slash('balance', 'U-EMP', { channel_id: 'D-U-EMP' })).blocks);
+assert.ok(/\*20 of 20\* days left\\n_2 in requests waiting for approval \(not taken off yet\)_/.test(balNow), balNow);
 const approverCards = calls('chat.postMessage').filter((c) => ['U-LEAD', 'U-CXO', 'U-ADM'].indexOf(c.payload.channel) !== -1);
 assert.strictEqual(approverCards.length, 3, 'lead, CXO and admin each get a card');
 assert.ok(approverCards.every((c) => /your decision needed/.test(flat(c.payload.blocks)) && /"action_id":"approve"/.test(flat(c.payload.blocks))), 'approver cards have buttons');
@@ -147,7 +156,8 @@ assert.strictEqual(upv.payload.view_id, 'V1'); assert.strictEqual(upv.payload.ha
 const summaryOf = (v) => flat(v.blocks.find((b) => b.block_id === 'summary'));
 let summary = summaryOf(upv.payload.view);
 assert.ok(/\*Dates\*\\nMon 30 Nov 2026\\nto Fri 4 Dec 2026/.test(summary) && /\*Days you are taking\*\\n5 days/.test(summary) &&
-  /\*Paid \/ Casual Leave left now\*\\n18 days of 20/.test(summary) && /\*Left after this request\*\\n13 days/.test(summary), summary);
+  /\*Paid \/ Casual Leave left now\*\\n20 days of 20\\n_2 days already asked for, waiting for approval_/.test(summary) &&
+  /\*Left if approved\*\\n13 days\\n_Nothing is taken off until approval_/.test(summary), summary);
 assert.ok(!upv.payload.view.blocks.some((b) => b.block_id === 'half'), 'no half-day question for a range');
 assert.strictEqual(upv.payload.view.blocks.find((b) => b.block_id === 'reason').element.initial_value, 'Kept', 'typed reason survives the redraw');
 assert.strictEqual(upv.payload.view.blocks.find((b) => b.block_id === 'end').element.initial_date, '2026-12-04');
@@ -165,14 +175,14 @@ interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 
   container: { type: 'view' }, view: { id: 'V1', hash: 'h3', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-11-30', true) } } });
 upv = last('views.update');
 summary = summaryOf(upv.payload.view);
-assert.ok(/\*Dates\*\\nMon 30 Nov 2026"/.test(summary) && /Half day \(0\.5\)/.test(summary) && /\*Left after this request\*\\n17\.5 days/.test(summary), summary);
+assert.ok(/\*Dates\*\\nMon 30 Nov 2026"/.test(summary) && /Half day \(0\.5\)/.test(summary) && /\*Left if approved\*\\n17\.5 days/.test(summary), summary);
 assert.ok(upv.payload.view.blocks.find((b) => b.block_id === 'half').element.initial_options.length === 1, 'tick kept');
 // a stale half-day tick is ignored once the dates become a range
 assert.strictEqual(run(`SlackCards.applyState(${JSON.stringify(modalState('2026-11-30', '2026-12-01', true))}).half`), false);
 // over quota is warned about before Send
 interact({ type: 'block_actions', user: { id: 'U-EMP' }, actions: [{ action_id: 'v', block_id: 'start' }],
   container: { type: 'view' }, view: { id: 'V1', hash: 'h4', callback_id: 'leave_apply', private_metadata: 'E903', state: { values: modalState('2026-11-30', '2026-12-31', false) } } });
-assert.ok(/\*Left after this request\*\\n0 days/.test(summaryOf(last('views.update').payload.view)) &&
+assert.ok(/\*Left if approved\*\\n0 days/.test(summaryOf(last('views.update').payload.view)) &&
   /beyond your balance will be \*Loss of Pay\*/.test(flat(last('views.update').payload.view.blocks)));
 console.log('✓ Apply form: labelled breakdown (dates, days taking, left now, left after); half-day question only for a single day; LOP warned');
 
