@@ -3,10 +3,10 @@
  *
  * Settings tab:
  *   SLACK_DAILY_CHANNEL  channel ID (C…) the Leave app posts to; the bot must be invited (/invite @Leave app)
- *   SLACK_DAILY_HOUR     hour of the day in the Settings time zone (default 11)
+ *   SLACK_DAILY_TIME     time of day, Asia/Kolkata: "11:00", "10:30", "9:45 AM", "2:15 pm" (default 11:00)
  *
- * setupSlack() installs one daily trigger (slackDailyDigest). Apps Script fires it a few
- * minutes after the hour. Weekends and Holidays-tab dates are skipped.
+ * setupSlack() installs one daily wake trigger (slackDailyDigest) 30–60 minutes early; it books a
+ * one-off trigger (slackDailyDigestPost) for the exact minute. Weekends and Holidays-tab dates are skipped.
  * Only APPROVED leave is listed. Run postDailyLeaveNow() from the editor to test at any time.
  */
 const SlackDaily = (() => {
@@ -24,7 +24,24 @@ const SlackDaily = (() => {
   const long = (iso) => { const d = DateUtil.parse(iso); return dayName(iso) + ', ' + MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate() + ', ' + d.getUTCFullYear(); };
 
   const channel = () => Config.get('SLACK_DAILY_CHANNEL');
-  const hour = () => Math.max(0, Math.min(23, Config.num('SLACK_DAILY_HOUR', 11)));
+  const POST_TRIGGER = 'slackDailyDigestPost';
+
+  /**
+   * SLACK_DAILY_TIME → { h, m, label }. Accepts "11:00", "9:30", "14:15", "11", "10:30 AM", "2:15 pm",
+   * and a cell Sheets turned into a time ("1899-12-30 11:00"). Falls back to the old SLACK_DAILY_HOUR, then 11:00.
+   */
+  function time() {
+    const raw = String(Config.get('SLACK_DAILY_TIME') || Config.get('SLACK_DAILY_HOUR') || '11:00').trim().toLowerCase();
+    const ampm = (raw.match(/\b(am|pm)\b/) || [])[1];
+    const hm = raw.match(/(\d{1,2}):(\d{2})(?!.*\d{1,2}:\d{2})/) || raw.match(/^(\d{1,2})(?:\s*(?:am|pm))?$/) || [null, '11', '00'];
+    let h = Number(hm[1]);
+    const m = Math.min(59, Number(hm[2] || 0));
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    h = Math.min(23, h);
+    const label = ((h % 12) || 12) + ':' + ('0' + m).slice(-2) + (h < 12 ? ' AM' : ' PM');
+    return { h: h, m: m, label: label };
+  }
 
   function isWorking(iso, cal) {
     return (cal.weekend || [0, 6]).indexOf(DateUtil.parse(iso).getUTCDay()) === -1 && !(cal.holidays || {})[iso];
@@ -85,6 +102,7 @@ const SlackDaily = (() => {
     if (!target) throw Errors.config('SLACK_DAILY_CHANNEL is empty in the Settings tab. Put the channel ID there (starts with C).');
     const today = DateUtil.today();
     if (!force && !isWorking(today, Catalog.calendar())) return 'Skipped: ' + today + ' is a weekend or holiday.';
+    if (!force && String(props().getProperty('SLACK_DAILY_LAST') || '').slice(0, 10) === today) return 'Skipped: already posted today.';
     const msg = build(today);
     try {
       SlackBot.postMessage(target, msg.text, msg.blocks);
@@ -94,32 +112,63 @@ const SlackDaily = (() => {
       }
       throw err;
     }
-    props().setProperty('SLACK_DAILY_LAST', DateUtil.now());
+    if (!force) props().setProperty('SLACK_DAILY_LAST', DateUtil.now());   // a manual test post never blocks the scheduled one
     return 'Posted to ' + target + ': ' + msg.text;
   }
 
   // ------------------------------------------------------------------ trigger
+  //
+  // Apps Script daily triggers only promise "within ±15 minutes". To post at the exact minute,
+  // a daily WAKE trigger fires 30–60 minutes early and books a one-off trigger for the exact time.
 
-  const triggers = () => ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === TRIGGER);
-  const savedHour = () => Number((props().getProperty(KEY) || '').split('@')[1]);
-  const isInstalled = () => triggers().some((t) => t.getUniqueId() === (props().getProperty(KEY) || '').split('@')[0]) && savedHour() === hour();
+  const triggersFor = (fn) => ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === fn);
+  const spec = () => { const t = time(); return t.h + ':' + t.m; };
+  const saved = () => (props().getProperty(KEY) || '').split('@');
+  const isInstalled = () => triggersFor(TRIGGER).some((t) => t.getUniqueId() === saved()[0]) && saved()[1] === spec();
 
-  /** One daily trigger at SLACK_DAILY_HOUR; replaced if the hour changed. Returns true if (re)installed. */
+  /** One daily wake trigger for SLACK_DAILY_TIME; replaced when the time changes. Returns true if (re)installed. */
   function install() {
     if (!channel()) return false;
     if (isInstalled()) return false;
-    triggers().forEach((t) => ScriptApp.deleteTrigger(t));
-    const t = ScriptApp.newTrigger(TRIGGER).timeBased().everyDays(1).atHour(hour()).nearMinute(0).inTimezone(LD_CONFIG.TIMEZONE).create();
-    props().setProperty(KEY, t.getUniqueId() + '@' + hour());
+    triggersFor(TRIGGER).forEach((t) => ScriptApp.deleteTrigger(t));
+    const t = time();
+    const wake = Math.max(0, t.h * 60 + t.m - 45);
+    const trigger = ScriptApp.newTrigger(TRIGGER).timeBased().everyDays(1)
+      .atHour(Math.floor(wake / 60)).nearMinute(wake % 60).inTimezone(LD_CONFIG.TIMEZONE).create();
+    props().setProperty(KEY, trigger.getUniqueId() + '@' + spec());
     return true;
   }
 
-  return { build, post, install, isInstalled, channel, hour };
+  /** Minutes since midnight now, in the app's time zone. */
+  const nowMinutes = () => { const hm = DateUtil.now().slice(11, 16).split(':').map(Number); return hm[0] * 60 + hm[1]; };
+
+  /** Wake trigger: book the exact-minute post, or post now if the time is (almost) here. */
+  function wake() {
+    const t = time();
+    const waitMs = (t.h * 60 + t.m - nowMinutes()) * 60000;
+    if (waitMs > 60000) {
+      ScriptApp.newTrigger(POST_TRIGGER).timeBased().after(waitMs).create();
+      return 'Booked the daily post for ' + t.label + ' (in ' + Math.round(waitMs / 60000) + ' min).';
+    }
+    return post(false);
+  }
+
+  /** The one-off post trigger: posts, then removes its own spent one-off triggers. */
+  function postBooked() {
+    try { return post(false); } finally { triggersFor(POST_TRIGGER).forEach((t) => ScriptApp.deleteTrigger(t)); }
+  }
+
+  return { build, post, install, isInstalled, channel, time, wake, postBooked };
 })();
 
-/** Trigger target: every day at SLACK_DAILY_HOUR (skips weekends and holidays). */
+/** Daily wake trigger (30–60 min before SLACK_DAILY_TIME): books the exact-time post. */
 function slackDailyDigest() {
-  try { return SlackDaily.post(false); } catch (err) { console.error('slackDailyDigest: ' + (err && err.message ? err.message : err)); throw err; }
+  try { return SlackDaily.wake(); } catch (err) { console.error('slackDailyDigest: ' + (err && err.message ? err.message : err)); throw err; }
+}
+
+/** One-off trigger at exactly SLACK_DAILY_TIME (skips weekends and holidays). */
+function slackDailyDigestPost() {
+  try { return SlackDaily.postBooked(); } catch (err) { console.error('slackDailyDigestPost: ' + (err && err.message ? err.message : err)); throw err; }
 }
 
 /** Run from the Apps Script editor to see the daily update in Slack right now. */

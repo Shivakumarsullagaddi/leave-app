@@ -31,8 +31,8 @@ function checkSlack() {
   const dailyChannel = SlackDaily.channel();
   const dailyOn = !!dailyChannel && SlackDaily.isInstalled();
   mark(dailyOn, 'Daily leave post ' + (!dailyChannel ? 'OFF → put a channel ID in Settings → SLACK_DAILY_CHANNEL'
-    : dailyOn ? 'every working day at ' + SlackDaily.hour() + ':00 to ' + dailyChannel + ' (invite the bot there: /invite @Leave app; test with postDailyLeaveNow)'
-      : 'trigger missing or hour changed → run setupSlack again'));
+    : dailyOn ? 'every working day at ' + SlackDaily.time().label + ' to ' + dailyChannel + ' (invite the bot there: /invite @Leave app; test with postDailyLeaveNow)'
+      : 'trigger missing or time changed → run setupSlack again'));
   const notify = Config.bool('SLACK_ENABLED');
   mark(notify, 'Approver notifications by Slack DM ' + (notify ? 'ON' : 'OFF → set SLACK_ENABLED to TRUE in the Settings tab (email is used meanwhile)'));
 
