@@ -17,6 +17,15 @@ The Leave app is a Slack app that talks to the Apps Script web app at `APP_URL` 
 
 Aliases accepted as the first word of the text: `balance bal status left`, `requests request list mine history`, `help ?`. Anything else shows help with "I don't know `word`".
 
+### Daily "who is on leave" post (replaces Vacation Tracker's daily update)
+
+`src/slack/SlackDaily.gs`. Every working day at `SLACK_DAILY_HOUR` (Settings, default 11, Asia/Kolkata) the Leave app posts to `SLACK_DAILY_CHANNEL` (a channel ID). The post has a TODAY block and a block for the next working day (Friday looks ahead to Monday), grouped by team, one line per person: "**Tanu** is on leave (Paid / Casual Leave) from Monday, Nov 16, 2026 through Tuesday, Nov 17, 2026". Half days are marked. Only APPROVED leave is listed. Weekends and Holidays-tab dates are skipped by the trigger.
+
+- Test channel: `C0CJK6ELW2Y` (private, seeded as the default). To go live, put the #ooo channel ID in `SLACK_DAILY_CHANNEL` and invite the bot there.
+- The bot must be in the channel: `/invite @Leave app`. Otherwise the post fails with a message saying so.
+- `setupSlack()` installs or re-installs the daily trigger (one only; re-installed when the hour changes).
+- `postDailyLeaveNow()` in the editor posts immediately, even on a weekend.
+
 ## 2. Card design rules
 
 Every card answers four questions with labels, never a single line:

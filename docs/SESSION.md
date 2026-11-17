@@ -113,6 +113,8 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 
 2026-11-17 (later): **Balance only cut on approval** (`BalanceService.available`, `recalcAll()` run by `setupDatabase` fixes stored values). **Approvers known up front**: `SlackCache` stores each person's approvers (`ApprovalRouter.route`), the Apply form shows a "Who approves" block, and the requester's first card is already complete (status, days, approvers); the background job only adds the request ID. "Open in Leave Desk" removed from the requester's card (still on approver notification cards). "Your approvers have been told" line removed.
 
+2026-11-17: **Daily leave post** like Vacation Tracker (`SlackDaily.gs`, `test/daily.test.js`). Settings `SLACK_DAILY_CHANNEL` (test channel C0CJK6ELW2Y) and `SLACK_DAILY_HOUR` (11). Plan: run it in the test channel, then switch to #ooo once people apply through Leave Desk, run side by side with Vacation Tracker for a few days, then turn Vacation Tracker's notification off.
+
 ## 7. Next steps (in order)
 
 1. **User:** in Slack app settings add Bot Token Scope `im:write`, reinstall, paste the new token into `SLACK_BOT_TOKEN`; optionally add commands `/leave-balance`, `/leave-requests` (same Request URL); set the `/leavedesk` usage hint to `[balance | requests | help]`.

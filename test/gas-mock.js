@@ -172,6 +172,7 @@ function makeEnv(opts) {
       newTrigger: (fn) => {
         const t = { fn, kind: '' };
         const b = { timeBased: () => b, after: () => { t.kind = 'once'; return b; }, everyMinutes: () => { t.kind = 'minute'; return b; },
+          everyDays: () => { t.kind = 'daily'; return b; }, atHour: (h) => { t.hour = h; return b; }, nearMinute: () => b, inTimezone: (z) => { t.tz = z; return b; },
           create: () => { t.id = 'trg-' + (++env.triggerSeq); env.triggers.push(t); return { getUniqueId: () => t.id, getHandlerFunction: () => t.fn }; } };
         return b;
       },

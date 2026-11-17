@@ -24,6 +24,8 @@ function buildSeed_(nowStr) {
     ['SLACK_ENABLED', 'FALSE', 'Turn on after adding the bot token in Script Properties (SLACK_BOT_TOKEN); people get DMs from the Leave app.'],
     ['SLACK_DEFAULT_CHANNEL', '#leave-requests', 'Channel for request messages when a team has none.'],
     ['SLACK_ADMIN_CHANNEL', '#hr-admin', 'Channel for accrual and admin summaries.'],
+    ['SLACK_DAILY_CHANNEL', 'C0CJK6ELW2Y', 'Channel ID (C…) for the 11 AM "who is on leave" post. Test channel for now; put the #ooo channel ID here to go live. Empty = off.'],
+    ['SLACK_DAILY_HOUR', '11', 'Hour (0–23, Asia/Kolkata) of the daily leave post. Run setupSlack after changing it.'],
     ['EMAIL_FALLBACK', 'TRUE', 'Also email approvers if Slack is off or fails.'],
     ['APP_URL', '', 'Web app URL. Fill in after deploying (used for "Open request" buttons).'],
     ['TEST_MODE', 'TRUE', 'Admins can "View as" any employee to test the app. Set FALSE before go-live.'],
