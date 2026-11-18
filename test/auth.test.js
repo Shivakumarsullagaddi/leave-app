@@ -84,8 +84,10 @@ console.log('✓ employee applied with own session; lead approved with own sessi
 
 respond(good('shivakumarullagaddi855@gmail.com'));
 const cxo = callback({ code: 'c7', state: fresh() }).session;
-const d2 = run(`apiDecide('${cxo}', '${r.req_id}', 'APPROVED', '')`).data;
-console.log('✓ CXO added approval:', d2.approvals.map((a) => a.name + ' ' + a.decision).join(', '));
+const d2 = run(`apiDecide('${cxo}', '${r.req_id}', 'APPROVED', '')`);
+assert.strictEqual(d2.code, 'CONFLICT', 'first decision is final');
+assert.ok(/Already approved by Test Lead/.test(d2.error), d2.error);
+console.log('✓ CXO with own session is told:', d2.error);
 
 // --- Unknown Google account, session expiry, sign-out
 respond(good('stranger@gmail.com'));

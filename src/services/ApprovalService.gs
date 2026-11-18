@@ -45,7 +45,8 @@ const ApprovalService = (() => {
       'APPROVED>REJECTED': BalanceService.revert,
     }[request.status + '>' + next];
     if (move) move(request.emp_id, request.type_id, year, paid);
-    if (next === 'REJECTED') closeOpen(request.req_id);
+    // A rejection always closes the others; with FIRST_DECISION an approval does too, so nobody can overturn it.
+    if (next === 'REJECTED' || (next === 'APPROVED' && DecisionPolicy.firstIsFinal())) closeOpen(request.req_id);
 
     Audit.log({ actor: actor.email, action: action || (next === 'APPROVED' ? 'APPROVE' : 'REJECT'),
       entity: 'LeaveRequests', entity_id: request.req_id, field: 'status', old_value: request.status, new_value: next });
@@ -69,10 +70,12 @@ const ApprovalService = (() => {
       if (!request) throw Errors.notFound('Request ' + reqId);
       const mine = forRequest(reqId).find((a) => a.approver_id === approver.emp_id);
       if (!mine) throw Errors.forbidden('You are not an approver for this request.');
-      if (mine.decision !== 'PENDING') throw Errors.conflict('You have already responded to this request.');
-      if (request.status === 'REJECTED' || request.status === 'CANCELLED') {
-        throw Errors.conflict('This request is already ' + request.status.toLowerCase() + '.');
+      if (mine.decision === 'APPROVED' || mine.decision === 'REJECTED') throw Errors.conflict('You have already responded to this request.');
+      if (request.status === 'CANCELLED') throw Errors.conflict('The requester already cancelled this request. No action needed.');
+      if (request.status === 'REJECTED' || (request.status === 'APPROVED' && DecisionPolicy.firstIsFinal())) {
+        throw Errors.conflict(decidedText(request));
       }
+      if (mine.decision !== 'PENDING') throw Errors.conflict('This request was closed. No action needed.');
       if (request.status === 'APPROVED' && decision === 'REJECTED' && DecisionPolicy.isLocked(request)) {
         throw Errors.conflict('This leave has already started, so it can no longer be rejected.');
       }
@@ -86,6 +89,45 @@ const ApprovalService = (() => {
     });
     Notifier.publish(out.event, { reqId: reqId, actorId: approver.emp_id });
     return RequestView.of(out.request);
+  }
+
+  /** "Already approved by Test Lead at 2026-11-18 10:42. The first decision is final, so no action is needed." */
+  function decidedText(request) {
+    const who = request.final_by ? Directory.name(request.final_by) : '';
+    const when = String(request.final_at || '').slice(0, 16).replace('T', ' ');
+    return 'Already ' + request.status.toLowerCase() + (who ? ' by ' + who : '') + (when ? ' at ' + when : '') +
+      '. The first decision is final, so no action is needed.';
+  }
+
+  /** The person behind final_by (an emp_id, or an email when another tool wrote it), else the first admin. */
+  function actorOf(finalBy) {
+    return Directory.employee(finalBy) || Directory.byEmail(finalBy) ||
+      Config.list('ADMIN_EMAILS').map(Directory.byEmail).find(Boolean) || null;
+  }
+
+  /**
+   * A request whose status was changed outside Leave Desk (the Sheets dashboard, or by hand):
+   * closes the approvers still waiting, recalculates that balance from LeaveRequests and logs it,
+   * then sends the usual notification. Returns the event sent, or null if there was nothing to adopt.
+   */
+  function adoptOutside(reqId) {
+    const out = Db.transaction(() => {
+      const request = requests().get(reqId);
+      if (!request || request.status === 'PENDING') return null;
+      const actor = actorOf(request.final_by);
+      closeOpen(reqId);
+      BalanceService.reconcile(request.emp_id, request.type_id, DateUtil.year(request.start_date));
+      const patch = { updated_at: DateUtil.now() };
+      if (!request.final_at) patch.final_at = patch.updated_at;
+      if (actor && request.final_by !== actor.emp_id) patch.final_by = actor.emp_id;
+      requests().update(reqId, patch);
+      Audit.log({ actor: actor ? actor.email : 'system', action: 'UPDATE', entity: 'LeaveRequests', entity_id: reqId, field: 'status',
+        new_value: request.status, reason: 'Decided outside Leave Desk (Sheets dashboard): other approvers closed, balance recalculated.' });
+      const event = { APPROVED: 'APPROVED', REJECTED: 'REJECTED', CANCELLED: 'CANCELLED' }[request.status] || null;
+      return event ? { event: event, actorId: actor ? actor.emp_id : '' } : null;
+    });
+    if (out) Notifier.publish(out.event, { reqId: reqId, actorId: out.actorId });
+    return out ? out.event : null;
   }
 
   /** Requests waiting for this approver, plus the ones they recently decided. */
@@ -112,5 +154,5 @@ const ApprovalService = (() => {
     };
   }
 
-  return { open, closeOpen, autoApprove, decide, inbox };
+  return { open, closeOpen, autoApprove, decide, adoptOutside, inbox };
 })();

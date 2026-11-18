@@ -13,25 +13,43 @@ const SlackBot = (() => {
   const cache = () => CacheService.getScriptCache();
   const SIX_HOURS = 21600;
 
-  function call(method, args) {
+  function token_() {
     const token = prop('SLACK_BOT_TOKEN');
     if (!token) throw Errors.config('SLACK_BOT_TOKEN is not set in Script Properties.');
+    return token;
+  }
+
+  function request_(method, args, token) {
     const form = {};
     Object.keys(args || {}).forEach((k) => {
       if (args[k] === undefined || args[k] === null) return;
       form[k] = typeof args[k] === 'object' ? JSON.stringify(args[k]) : String(args[k]);
     });
-    const response = UrlFetchApp.fetch('https://slack.com/api/' + method, {
-      method: 'post',
-      headers: { Authorization: 'Bearer ' + token },
-      payload: form,
-      muteHttpExceptions: true,
-    });
+    return { url: 'https://slack.com/api/' + method, method: 'post', headers: { Authorization: 'Bearer ' + token }, payload: form, muteHttpExceptions: true };
+  }
+
+  function parse_(method, response) {
     const result = JSON.parse(response.getContentText());
     if (!result.ok) throw Errors.slack('Slack said "' + result.error + '" for ' + method + '.');
     const headers = response.getAllHeaders ? response.getAllHeaders() : {};
     result.scopes = String(headers['x-oauth-scopes'] || headers['X-OAuth-Scopes'] || '').split(',').map((s) => s.trim()).filter(String);
     return result;
+  }
+
+  function call(method, args) {
+    const r = request_(method, args, token_());
+    return parse_(method, UrlFetchApp.fetch(r.url, r));
+  }
+
+  /**
+   * Several calls in one round-trip (UrlFetchApp.fetchAll runs them in parallel).
+   * calls = [[method, args], …]. Returns, in order, each result or the Error it raised. Never throws per call.
+   */
+  function callAll(calls) {
+    if (!calls.length) return [];
+    const token = token_();
+    const responses = UrlFetchApp.fetchAll(calls.map((c) => request_(c[0], c[1], token)));
+    return responses.map((res, i) => { try { return parse_(calls[i][0], res); } catch (err) { return err; } });
   }
 
   const authTest = () => call('auth.test', {});
@@ -71,7 +89,7 @@ const SlackBot = (() => {
   function userIdByEmail(email) {
     if (!email) return '';
     const hit = cache().get(emailKey(email));
-    if (hit) return hit;
+    if (hit) return hit === '-' ? '' : hit;   // '-' = Slack said this address is not a member
     try {
       const id = lookupByEmail(email).user.id;
       rememberUser(email, id);
@@ -82,5 +100,29 @@ const SlackBot = (() => {
     }
   }
 
-  return { prop, call, authTest, getUser, lookupByEmail, openModal, publishHome, updateView, postMessage, updateMessage, userIdByEmail, rememberUser, dmChannel, rememberDm };
+  /**
+   * Slack member IDs for many emails at once: { email: 'U…' | '' (not on Slack) }.
+   * Emails whose lookup failed for another reason are left out, so they are retried next time.
+   */
+  function userIdsByEmail(emails) {
+    const out = {};
+    const ask = [];
+    emails.forEach((email) => {
+      const hit = cache().get(emailKey(email));
+      if (hit !== null && hit !== undefined) out[email] = hit === '-' ? '' : hit;
+      else ask.push(email);
+    });
+    for (let i = 0; i < ask.length; i += 25) {
+      const batch = ask.slice(i, i + 25);
+      callAll(batch.map((email) => ['users.lookupByEmail', { email: email }])).forEach((res, j) => {
+        const email = batch[j];
+        if (!(res instanceof Error)) { out[email] = res.user.id; rememberUser(email, res.user.id); }
+        else if (/users_not_found/.test(res.message)) { out[email] = ''; cache().put(emailKey(email), '-', SIX_HOURS); }
+        else console.error('SlackBot: lookup ' + email + ': ' + res.message);
+      });
+    }
+    return out;
+  }
+
+  return { prop, call, callAll, authTest, getUser, lookupByEmail, openModal, publishHome, updateView, postMessage, updateMessage, userIdByEmail, userIdsByEmail, rememberUser, dmChannel, rememberDm };
 })();

@@ -136,6 +136,80 @@ const SlackCards = (() => {
     return blocks;
   }
 
+  /** requestCard fields from a RequestView (request + employee + approvals), plus extra (title, note …). */
+  const cardOf = (saved, extra) => Object.assign({
+    employee: saved.employee ? saved.employee.name : saved.emp_id, role: saved.employee ? personRole(saved.employee) : '',
+    team: saved.employee ? saved.employee.team_name : '', type: saved.type_name,
+    start_date: saved.start_date, end_date: saved.end_date, days: saved.days, lop: saved.lop_days, reason: saved.reason, status: saved.status,
+    approvers: (saved.approvals || []).filter((a) => a.approver_id !== Directory.SYSTEM)
+      .map((a) => ({ name: a.name, role: a.role, decision: a.decision, decided_at: a.decided_at || '' })),
+    req_id: saved.req_id, submitted_at: saved.submitted_at,
+  }, extra || {});
+
+  const VERB = { APPROVED: 'approved', REJECTED: 'rejected', CANCELLED: 'cancelled' };
+  const firstName = (saved) => (saved.employee ? saved.employee.name : saved.emp_id);
+
+  /** One-line text for a settled approver card (notification preview). */
+  function settledText(saved, viewerEmpId) {
+    if (saved.status === 'CANCELLED') return firstName(saved) + ' cancelled ' + saved.req_id + '. No action needed.';
+    if (saved.final_by === viewerEmpId) return 'You ' + VERB[saved.status] + ' ' + saved.req_id + '.';
+    return saved.req_id + ' was ' + VERB[saved.status] + (saved.final_by_name ? ' by ' + saved.final_by_name : '') + '. No action needed.';
+  }
+
+  /**
+   * An approver's card once the request is final — same labelled layout, no buttons.
+   * The person who decided reads "You approved …"; everyone else reads who decided and that nothing is needed.
+   */
+  function settledCard(saved, viewerEmpId) {
+    const name = firstName(saved);
+    const mine = saved.final_by === viewerEmpId && saved.status !== 'CANCELLED';
+    const title = saved.status === 'CANCELLED' ? '🚫 ' + name + ' cancelled this request'
+      : mine ? (saved.status === 'APPROVED' ? '✅ You approved ' : '❌ You rejected ') + name + '’s leave'
+        : (saved.status === 'APPROVED' ? '✅ ' : '❌ ') + name + '’s leave was ' + VERB[saved.status];
+    const when = stamp(saved.final_at);
+    const note = saved.status === 'CANCELLED' ? '🗒 Cancelled by ' + esc(name) + (when ? ' at ' + esc(when) : '') + '. No action needed from you.'
+      : mine ? '🗒 Your decision was recorded' + (when ? ' at ' + esc(when) : '') + '.'
+        : '🗒 ' + esc(saved.final_by_name || 'Someone') + ' ' + VERB[saved.status] + ' it' + (when ? ' at ' + esc(when) : '') +
+          '. The first decision is final, so no action is needed from you.';
+    return requestCard(cardOf(saved, { title: title, note: note }));
+  }
+
+  /**
+   * The card an approver sees when they click Approve/Reject on a request someone already decided in Slack.
+   * v = the button's value { req_id, who, when, type, days }; claim = { decision|status, by, at, slack_user_id, final }.
+   */
+  function claimedCard(v, claim, mySlackId) {
+    return [header(claimTitle(claim, mySlackId)), section(claimText(claim, mySlackId)),
+      fields([['Requested by', v.who || '—'], ['Leave type', v.type || '—'], ['Dates', v.when || '—'], ['Working days', v.days || '—']]),
+      context(esc(v.req_id) + ' · ' + appName())];
+  }
+  function claimTitle(claim, mySlackId) {
+    const word = VERB[claim.status || claim.decision] || 'decided';
+    if (claim.slack_user_id === mySlackId) return (claim.decision === 'REJECTED' ? '❌ You rejected this' : '✅ You approved this');
+    return (claim.status === 'CANCELLED' ? '🚫 ' : word === 'rejected' ? '❌ ' : '✅ ') + 'Already ' + word;
+  }
+  /** "Test Lead approved this at 10:42. The first decision is final, so no action is needed from you." */
+  function claimText(claim, mySlackId) {
+    const word = VERB[claim.status || claim.decision] || 'decided';
+    const at = stamp(claim.at);
+    if (claim.slack_user_id === mySlackId && !claim.final) return 'You already sent your decision (' + word + '). It is being recorded — this card updates when it is.';
+    if (claim.slack_user_id === mySlackId) return 'You already ' + word + ' this' + (at ? ' at ' + esc(at) : '') + '. Nothing more to do.';
+    if (claim.status === 'CANCELLED') return 'The requester cancelled this request' + (at ? ' at ' + esc(at) : '') + '. No action is needed from you.';
+    return '*' + esc(claim.by || 'Another approver') + '* ' + word + ' this' + (at ? ' at ' + esc(at) : '') + '. The first decision is final, so no action is needed from you.';
+  }
+
+  /** Shown the instant /leavedesk arrives for someone not cached yet; replaced by the real form a moment later. */
+  function loadingModal() {
+    return { type: 'modal', callback_id: 'leave_loading', title: plain('Apply for leave'), close: plain('Cancel'),
+      blocks: [section('⏳ *Getting your balance and approvers…*\nThis takes a few seconds the first time only.')] };
+  }
+
+  /** A modal that explains a problem (not registered, missing scope …) instead of a vanishing error. */
+  function messageModal(title, text) {
+    return { type: 'modal', callback_id: 'leave_message', title: plain(title), close: plain('Close'),
+      blocks: [section(text), context(appName())] };
+  }
+
   const fmtLong = (iso) => Utilities.formatDate(DateUtil.parse(iso), 'UTC', 'EEE d MMM yyyy');
   const HALF_OPTION = { text: plain('Yes, take only half of this day (0.5 day)'), value: 'half' };
   const daysWord = (n) => n + (n === 1 ? ' day' : ' days');
@@ -332,5 +406,6 @@ const SlackCards = (() => {
     return reply(meta, 'Leave Desk help', blocks);
   }
 
-  return { fromMessage, requestCard, applyModal, applyState, quote, decideModal, home, balance, requests, help, reply, ephemeral, dateRange, dayText, statusText, personRole, STATUS };
+  return { fromMessage, requestCard, cardOf, settledCard, settledText, claimedCard, claimText, loadingModal, messageModal,
+    applyModal, applyState, quote, decideModal, home, balance, requests, help, reply, ephemeral, dateRange, dayText, statusText, personRole, STATUS };
 })();

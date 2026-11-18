@@ -39,15 +39,26 @@ assert.ok(/did not come from the Leave app/.test(errReply.text), errReply.text);
 assert.ok(!('blocks' in errReply) || errReply.blocks.every(Boolean), 'blocks must not contain null: ' + flat(errReply.blocks));
 console.log('✓ a slash-command error returns a clean ephemeral (no null blocks)');
 
-// ---- setupSlack: installs the minute trigger once, warms the cache
-run('setupSlack()'); run('setupSlack()');
+// ---- setupSlack: installs the minute trigger once, links everyone to Slack by email (one parallel batch), warms the cache
+run('setupSlack()');
+const lookups = calls('users.lookupByEmail').length;
+run('setupSlack()');
 assert.strictEqual(env.triggers.filter((t) => t.kind === 'minute').length, 1);
 assert.ok(env.cache['slack:emp:E903'], 'snapshot warmed for E903');
-console.log('✓ setupSlack installs the trigger once and warms', Object.keys(env.cache).filter((k) => k.startsWith('slack:emp:')).length, 'snapshots');
+assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E903').slack_user_id"), 'U-EMP', 'Slack ID written to Employees before anyone typed a command');
+assert.strictEqual(run("Db.table('Employees').get('E900').slack_user_id"), 'U-ADM');
+assert.strictEqual(env.cache['slack:user:U-LEAD'].v, 'E902', 'Slack user → employee is cached for everyone');
+assert.strictEqual(calls('users.lookupByEmail').length, lookups + 1, 'second run looks nobody up again (hits and misses are remembered); the 1 is checkSlack verifying the signed-in person live');
+console.log('✓ setupSlack installs the trigger once, pre-links', lookups, 'emails in one batch and warms', Object.keys(env.cache).filter((k) => k.startsWith('slack:emp:')).length, 'snapshots');
 
-// ---- first contact: Slack user → email → Employees; link job queued; modal opens with balance
+// ---- first /leavedesk ever is answered from the cache: no users.info, no sheet, no trigger
+const triggersBefore = env.triggers.length;
+const callsBefore = env.slack.length;
 let out = slash('');
 assert.strictEqual(out, '', 'slash reply must be empty when a modal opens');
+assert.deepStrictEqual(env.slack.slice(callsBefore).map((c) => c.method), ['views.open'], 'one Slack call: the modal itself');
+assert.strictEqual(env.triggers.length, triggersBefore, 'no trigger created');
+assert.ok(/snapshot\(cache\)/.test(run('SlackHandler.timing()')), run('SlackHandler.timing()'));
 let view = last('views.open').payload.view;
 assert.strictEqual(view.callback_id, 'leave_apply'); assert.strictEqual(view.private_metadata, 'E903');
 assert.ok(/\*Paid \/ Casual Leave\*\\n20 of 20 days left/.test(flat(view.blocks)), 'balance in modal');
@@ -56,11 +67,18 @@ assert.ok(view.blocks.every((b) => b.block_id !== 'start' || !b.element.initial_
 assert.ok(/Pick the first and last day/.test(flat(view.blocks)), 'summary placeholder');
 const whoText = flat(view.blocks.find((b) => b.block_id === 'approvers'));
 assert.ok(/\*Who approves\*\\n⏳ \*Test Lead\* · Team Lead\\n⏳ \*Test CXO\* · C-suite\\n⏳ \*Leave Admin\* · Admin\\n_All are asked at the same time. Any one approval is enough._/.test(whoText), whoText);
-assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903');
-assert.strictEqual(JSON.parse(props.SLACK_JOBS)[0].kind, 'link');
-run('slackRunJobs()');
-assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E903').slack_user_id"), 'U-EMP', 'Slack ID written to Employees');
-console.log('✓ /leavedesk: first contact links U-EMP → E903 and opens the apply modal with balance');
+console.log('✓ /leavedesk: very first command opens the apply modal straight from the cache —', run('SlackHandler.timing()'));
+
+// ---- not cached (evicted, or added a minute ago): a loading modal opens at once, then becomes the form
+delete env.cache['slack:user:U-ADM']; delete env.cache['slack:emp:E900'];
+out = slash('', 'U-ADM', { trigger_id: 'trig-miss' });
+assert.strictEqual(out, '');
+assert.strictEqual(last('views.open').payload.view.callback_id, 'leave_loading', 'something is on screen immediately');
+let filled = last('views.update').payload;
+assert.ok(/^V-/.test(filled.view_id), 'views.update targets the opened modal: ' + filled.view_id);
+assert.strictEqual(filled.view.callback_id, 'leave_apply'); assert.strictEqual(filled.view.private_metadata, 'E900');
+assert.ok(/views\.open\(loading\) \d+ms · users\.info \d+ms · snapshot\(sheet\) \d+ms · views\.update/.test(run('SlackHandler.timing()')), run('SlackHandler.timing()'));
+console.log('✓ cache miss: loading modal first, then the form —', run('SlackHandler.timing()'));
 
 // ---- later commands: no users.info, no sheet read needed
 const before = env.slack.length;
@@ -97,9 +115,15 @@ console.log('✓ in_channel inside the app DM; /leave-balance and /leave-request
 // ---- refused: forged token, stranger
 out = asJson(slash('', 'U-EMP', { token: 'forged' }));
 assert.ok(/did not come from the Leave app/.test(out.text), out.text);
-out = asJson(slash('', 'U-NOBODY'));
-assert.ok(/Slack said "user_not_found"/.test(out.text), out.text);
-console.log('✓ refused: forged token, unknown Slack user');
+out = slash('', 'U-NOBODY');
+assert.strictEqual(out, '', 'no ephemeral error: the explanation is in the modal');
+const nobody = last('views.update').payload.view;
+assert.strictEqual(nobody.callback_id, 'leave_message');
+assert.ok(/⚠️/.test(flat(nobody.blocks)) && !/user_not_found/.test(flat(nobody.blocks)), flat(nobody.blocks));
+// balance for a stranger: a clear ephemeral, never a timeout
+out = asJson(slash('balance', 'U-NOBODY'));
+assert.strictEqual(out.response_type, 'ephemeral'); assert.ok(/⚠️/.test(out.text), out.text);
+console.log('✓ refused: forged token; unknown Slack user sees in the modal:', JSON.stringify(flat(nobody.blocks).match(/⚠️[^"]*/)[0]));
 
 // ---- Send request: card posted at once, nothing filed yet; the job files it and updates the card
 const submission = (start, end, user, extra) => interact({
@@ -109,8 +133,16 @@ const submission = (start, end, user, extra) => interact({
     start: { v: { selected_date: start } }, end: { v: { selected_date: end } }, reason: { v: { value: 'Family trip' } },
   } } }, extra || {}),
 });
+const sendTriggers = env.triggers.length;
+const sendCalls = env.slack.length;
 out = asJson(submission('2026-11-18', '2026-11-19'));
 assert.deepStrictEqual(out, { response_action: 'clear' });
+assert.strictEqual(env.triggers.length, sendTriggers, 'Send creates no trigger (that was the slow part)');
+assert.deepStrictEqual(env.slack.slice(sendCalls).map((c) => c.method), ['chat.postMessage'], 'Send makes one Slack call: the requester card');
+assert.strictEqual(Object.keys(props).filter((k) => k.indexOf('SLACK_JOB_') === 0).length, 1, 'one job queued, no lock');
+const optimistic = flat(asJson(slash('balance', 'U-EMP', { channel_id: 'D-U-EMP' })).blocks);
+assert.ok(/\*20 of 20\* days left\\n_2 in requests waiting for approval/.test(optimistic), 'balance shows the 2 days waiting before the job runs: ' + optimistic);
+console.log('✓ Send: one Slack call, no trigger, job queued; balance already shows the days waiting —', run('SlackHandler.timing()'));
 let card = last('chat.postMessage');
 assert.strictEqual(card.payload.channel, 'U-EMP');
 const first = flat(card.payload.blocks);
@@ -120,9 +152,8 @@ assert.ok(/Waiting for Test Lead, Test CXO or Leave Admin — any one is enough/
   /⏳ \*Test Lead\* · Team Lead · waiting\\n⏳ \*Test CXO\* · C-suite · waiting\\n⏳ \*Leave Admin\* · Admin · waiting/.test(first), 'the first card already names the approvers: ' + first);
 assert.ok(!/Open in Leave Desk/.test(first) && !/approvers have been told/.test(first), first);
 assert.strictEqual(requestsOf('E903').length, 0, 'nothing filed before the job runs');
-assert.ok(env.triggers.some((t) => t.kind === 'once'), 'one-off kick created');
 assert.strictEqual(run('slackRunJobs()'), 1);
-assert.strictEqual(env.triggers.filter((t) => t.kind === 'once').length, 0, 'kicks cleared');
+assert.strictEqual(Object.keys(props).filter((k) => k.indexOf('SLACK_JOB_') === 0).length, 0, 'queue drained');
 const req = requestsOf('E903')[0];
 assert.ok(req && req.status === 'PENDING' && req.days === 2 && req.reason === 'Family trip', JSON.stringify(req));
 let upd = last('chat.update');
@@ -142,15 +173,25 @@ assert.ok(/\*Requested by\*\\nTest Employee · Test Team/.test(leadText) && /\*A
 assert.ok(/Your decision is needed/.test(leadText) && /\*Status\*\\n⏳ Waiting for Test Lead, Test CXO and Leave Admin \(any one is enough\)/.test(leadText), leadText);
 console.log('✓ Send request → card at once → filed as', req.req_id, '→ card updated; lead + CXO + admin got Approve/Reject cards');
 
-// ---- bad input stays in the modal; overlap is reported on the card, nothing saved
+// ---- bad input stays in the modal, judged from the cache: bad range, overlap, weekend only — nothing posted, nothing queued
+const badCalls = env.slack.length;
 out = asJson(submission('2026-11-25', '2026-11-24'));
 assert.strictEqual(out.response_action, 'errors'); assert.ok(/last day is before the first day/.test(out.errors.end), JSON.stringify(out));
+out = asJson(submission('2026-11-19', '2026-11-19'));
+assert.strictEqual(out.response_action, 'errors');
+assert.ok(new RegExp('already have leave on some of these dates \\(' + req.req_id + '\\)').test(out.errors.end), JSON.stringify(out));
+out = asJson(submission('2026-11-21', '2026-11-22'));
+assert.ok(/all weekends or holidays/.test(out.errors.end), JSON.stringify(out));
+assert.strictEqual(env.slack.length, badCalls, 'no Slack call for a refused form');
+assert.strictEqual(requestsOf('E903').length, 1);
+// the sheet still has the last word if the cache missed something: a clash is reported on the card as Not filed
+run(`Db.refresh(); SlackCache.snapshot('E903') && CacheService.getScriptCache().remove('slack:emp:E903')`);
 asJson(submission('2026-11-19', '2026-11-19'));
 run('slackRunJobs()');
 upd = last('chat.update');
 assert.ok(/Not filed/.test(flat(upd.payload.blocks)) && /already have leave on some of these dates/.test(flat(upd.payload.blocks)), flat(upd.payload.blocks));
 assert.strictEqual(requestsOf('E903').length, 1);
-console.log('✓ bad range stays in the modal; overlap shows on the card as Not filed');
+console.log('✓ bad range, overlap and weekend-only are refused inside the form; the sheet re-checks (Not filed) when the cache had no snapshot');
 
 // ---- picking a date redraws the form with the exact dates, working days and balance left (views.update)
 const modalState = (start, end, half) => ({ type: { v: { selected_option: { value: 'LT-PL', text: { type: 'plain_text', text: 'Paid / Casual Leave' } } } },
@@ -230,25 +271,70 @@ const told = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-EM
 assert.ok(/Leave approved/.test(flat(told.payload.blocks)) || /Approved/.test(flat(told.payload.blocks)), flat(told.payload.blocks));
 console.log('✓ Lead approved from Slack with a comment →', req.req_id, 'APPROVED; approver card updated; requester got the ✅ card');
 
-// ---- Reject needs a reason; CXO rejects the approved leave (allowed until it starts)
+// ---- every approver sees the same final state: the CXO's and admin's cards lost their buttons when the Lead's approval was filed
+const lastUpdateOn = (chan) => calls('chat.update').filter((c) => c.payload.channel === chan).at(-1);
+['D-U-CXO', 'D-U-ADM'].forEach((chan) => {
+  const t = flat(lastUpdateOn(chan).payload.blocks);
+  assert.ok(/Test Employee’s leave was approved/.test(t) && /Test Lead approved it at 2026-11-16/.test(t) && /first decision is final/.test(t), t);
+  assert.ok(!/"action_id":"approve"/.test(t) && !/"action_id":"reject"/.test(t), 'no buttons left on ' + chan);
+});
+assert.ok(!('SLACK_CARDS_' + req.req_id in props), 'card list cleared once closed');
+console.log('✓ CXO and admin cards closed in one parallel call: "Test Lead approved it … no action is needed from you", no buttons');
+
+// ---- CXO clicks Reject on a card anyway (e.g. an old copy): told at once on the card, no modal, nothing queued
+const cxoCard = approverCards.find((c) => c.payload.channel === 'U-CXO');
+const rejectBtn = cxoCard.payload.blocks.find((b) => b.type === 'actions').elements.find((e) => e.action_id === 'reject');
+const opensBefore = calls('views.open').length;
+out = interact({ type: 'block_actions', user: { id: 'U-CXO' }, trigger_id: 'trig-x', actions: [rejectBtn], container: { type: 'message', channel_id: 'D-CXO', message_ts: 'ts-cxo' } });
+assert.strictEqual(out, '');
+assert.strictEqual(calls('views.open').length, opensBefore, 'no modal for a decided request');
+let cl = last('chat.update');
+assert.strictEqual(cl.payload.channel, 'D-CXO');
+assert.ok(/Already approved/.test(flat(cl.payload.blocks)) && /\*Test Lead\* approved this at 2026-11-16/.test(flat(cl.payload.blocks)) && !/"action_id"/.test(flat(cl.payload.blocks)), flat(cl.payload.blocks));
+// a Reject modal that was already open is refused inside the modal (reason is checked first, as before)
 const rejMeta = Object.assign({}, meta, { decision: 'REJECTED', channel: '', ts: '' });
 out = asJson(decide(rejMeta, '', 'U-CXO'));
 assert.strictEqual(out.response_action, 'errors'); assert.ok(/Add a short reason/.test(out.errors.comment));
-asJson(decide(rejMeta, 'Client visit that week', 'U-CXO'));
+out = asJson(decide(rejMeta, 'Client visit that week', 'U-CXO'));
+assert.strictEqual(out.response_action, 'errors');
+assert.ok(/Test Lead approved this at 2026-11-16 .*first decision is final/.test(out.errors.comment), out.errors.comment);
+assert.strictEqual(Object.keys(props).filter((k) => k.indexOf('SLACK_JOB_') === 0).length, 0, 'nothing queued');
+assert.strictEqual(requestsOf('E903').find((r) => r.req_id === req.req_id).status, 'APPROVED', 'the approval stands');
+console.log('✓ CXO tried to reject after the Lead approved → refused instantly:', JSON.stringify(out.errors.comment));
+// the Lead sending again is told it is already done
+out = asJson(decide(meta, '', 'U-LEAD'));
+assert.ok(/You already approved this/.test(out.errors.comment), JSON.stringify(out));
+console.log('✓ repeat decision →', out.errors.comment);
+
+// ---- race: Lead and CXO both decide a new request before the minute job runs → first submit wins, deterministically
+asJson(submission('2026-11-25', '2026-11-25'));
 run('slackRunJobs()');
-assert.strictEqual(requestsOf('E903')[0].status, 'REJECTED');
-const cxoNote = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-CXO').at(-1);
-assert.ok(/You rejected Test Employee’s leave/.test(flat(cxoNote.payload.blocks)) && /Client visit/.test(flat(cxoNote.payload.blocks)), flat(cxoNote.payload.blocks));
+const raceReq = requestsOf('E903').find((r) => r.start_date === '2026-11-25');
+const raceMeta = { req_id: raceReq.req_id, who: 'Test Employee', when: 'Wed 25 Nov', type: 'Paid / Casual Leave', days: '1 day', channel: '', ts: '' };
+out = asJson(decide(Object.assign({}, raceMeta, { decision: 'REJECTED' }), 'Client visit that week', 'U-CXO'));   // CXO first
+assert.deepStrictEqual(out, { response_action: 'clear' });
+out = asJson(decide(Object.assign({}, raceMeta, { decision: 'APPROVED' }), 'ok', 'U-LEAD'));                     // Lead a moment later
+assert.strictEqual(out.response_action, 'errors');
+assert.ok(/Test CXO rejected this/.test(out.errors.comment), out.errors.comment);
+run('slackRunJobs()');
+assert.strictEqual(requestsOf('E903').find((r) => r.req_id === raceReq.req_id).status, 'REJECTED');
 const rejected = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-EMP').at(-1);
 assert.ok(/Leave not approved/.test(flat(rejected.payload.blocks)) && /Client visit that week/.test(flat(rejected.payload.blocks)), flat(rejected.payload.blocks));
-console.log('✓ CXO rejected with a reason → REJECTED; requester sees the reason');
+console.log('✓ race: CXO rejected first, Lead told at once "Test CXO rejected this…"; filed REJECTED; requester sees the reason');
 
-// ---- a decision that is no longer possible is explained, not swallowed
-asJson(decide(meta, '', 'U-LEAD'));
+// ---- even if both slip past the cache claim (same millisecond), the queue files them in order and the second is told
+asJson(submission('2026-11-26', '2026-11-26'));
 run('slackRunJobs()');
-const sorry = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-LEAD').at(-1);
-assert.ok(/was not recorded: You have already responded/.test(sorry.payload.text), sorry.payload.text);
-console.log('✓ repeat decision →', sorry.payload.text);
+const r2 = requestsOf('E903').find((r) => r.start_date === '2026-11-26');
+const m2 = Object.assign({}, raceMeta, { req_id: r2.req_id, when: 'Thu 26 Nov', decision: 'APPROVED' });
+asJson(decide(m2, 'first', 'U-LEAD'));
+delete env.cache['slack:claim:' + r2.req_id];                                      // simulate the race window
+asJson(decide(Object.assign({}, m2, { decision: 'REJECTED' }), 'second', 'U-CXO'));
+run('slackRunJobs()');
+assert.strictEqual(requestsOf('E903').find((r) => r.req_id === r2.req_id).status, 'APPROVED', 'first queued decision wins');
+const loser = calls('chat.postMessage').filter((c) => c.payload.channel === 'U-CXO').at(-1);
+assert.ok(/was not recorded: Already approved by Test Lead at .* The first decision is final/.test(loser.payload.text), loser.payload.text);
+console.log('✓ same-millisecond race: queue order decides → APPROVED; CXO told:', loser.payload.text);
 
 // ---- App Home: opened → published from cache; republished after changes; Request leave button opens the modal
 out = post({}, JSON.stringify({ type: 'event_callback', token: 'verify-me', event: { type: 'app_home_opened', user: 'U-LEAD', tab: 'home' } }));
@@ -290,9 +376,46 @@ run('SlackCache.refresh()');
 assert.strictEqual(last('views.open') && env.cache['slack:user:U-EMP'].v, 'E901', 'U-EMP now resolves to Test CXO');
 run("Db.table('Employees').update('E901', { slack_user_id: '' })");
 run('SlackCache.refresh()');
-assert.strictEqual(env.cache['slack:user:U-EMP'], undefined, 'an ID removed from every row is forgotten, not kept for six hours');
-run("Db.table('Employees').update('E903', { slack_user_id: 'U-EMP' })"); run('SlackCache.refresh()');
-console.log('✓ sheet edits to slack_user_id take effect on refresh (setupSlack or the 10-minute refresh)');
+assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903', 'cleared rows heal themselves: U-EMP is linked back to E903 by email');
+assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E901').slack_user_id"), 'U-CXO', 'and E901 gets its own Slack ID back');
+// an ID that no row (and no email) claims any more is forgotten, not kept for six hours
+run("Db.table('Employees').update('E904', { slack_user_id: 'U-GHOST' })"); run('SlackCache.refresh()');
+assert.strictEqual(env.cache['slack:user:U-GHOST'].v, 'E904');
+run("Db.table('Employees').update('E904', { slack_user_id: '' })"); run('SlackCache.refresh()');
+assert.strictEqual(env.cache['slack:user:U-GHOST'], undefined, 'an ID removed from every row is forgotten');
+console.log('✓ sheet edits to slack_user_id take effect on refresh; cleared rows are re-linked by email; dropped IDs are forgotten');
+
+// ---- someone who left can't keep applying from an old snapshot
+run("Db.table('Employees').update('E904', { status: 'Inactive' })"); run('SlackCache.refresh()');
+assert.strictEqual(env.cache['slack:emp:E904'], undefined, 'snapshot of an inactive person removed');
+run("Db.table('Employees').update('E904', { status: 'Active' })"); run('SlackCache.refresh()');
+console.log('✓ deactivated employee: snapshot dropped on refresh');
+
+// ---- decided in the Sheets dashboard (writes LeaveRequests directly, bypassing Leave Desk) → adopted by the minute job
+asJson(submission('2026-12-10', '2026-12-10'));
+run('slackRunJobs()');
+const dash = requestsOf('E903').find((r) => r.start_date === '2026-12-10');
+assert.ok(('SLACK_CARDS_' + dash.req_id) in props, 'approver cards remembered');
+const balOf = () => run("Db.refresh(); Db.table('LeaveBalances').find((b) => b.emp_id === 'E903' && b.type_id === 'LT-PL' && Number(b.year) === 2026)");
+const balBefore = balOf();
+run(`Db.table('LeaveRequests').update('${dash.req_id}', { status: 'APPROVED', final_by: 'admin@leavedesk.test' })`);   // what the dashboard's ✓ does
+const dmBefore = calls('chat.postMessage').length;
+run('slackRunJobs()');
+const after = balOf();
+assert.strictEqual(after.used, balBefore.used + 1, 'days moved to used'); assert.strictEqual(after.pending, balBefore.pending - 1, 'and out of pending');
+assert.strictEqual(run(`Db.refresh(); JSON.stringify(Db.table('Approvals').where((a) => a.req_id === '${dash.req_id}').map((a) => a.decision))`),
+  JSON.stringify(['NO_ACTION', 'NO_ACTION', 'NO_ACTION']), 'approvers closed');
+assert.strictEqual(requestsOf('E903').find((r) => r.req_id === dash.req_id).final_by, 'E900', 'final_by normalised to the admin emp_id');
+const toldEmp = calls('chat.postMessage').slice(dmBefore).filter((c) => c.payload.channel === 'U-EMP');
+assert.strictEqual(toldEmp.length, 1, 'requester told once');
+assert.ok(/Approved by/.test(flat(toldEmp[0].payload.blocks)) && /Leave Admin/.test(flat(toldEmp[0].payload.blocks)), flat(toldEmp[0].payload.blocks));
+['D-U-LEAD', 'D-U-CXO'].forEach((chan) => assert.ok(/was approved/.test(flat(lastUpdateOn(chan).payload.blocks)) && /Leave Admin approved it/.test(flat(lastUpdateOn(chan).payload.blocks)), chan));
+assert.ok(!(('SLACK_CARDS_' + dash.req_id) in props));
+assert.ok(run(`Db.refresh(); Db.table('AuditLog').where((l) => l.entity_id === '${dash.req_id}').some((l) => /outside Leave Desk/.test(l.reason))`), 'audit row');
+const quiet = calls('chat.postMessage').length;
+run('slackRunJobs()');
+assert.strictEqual(calls('chat.postMessage').length, quiet, 'adopted once, never again');
+console.log('✓ dashboard approval adopted within a minute: approvers closed, balance moved, requester told, cards closed, audited — once');
 
 // ---- Events API handshake
 assert.deepStrictEqual(asJson(post({}, JSON.stringify({ type: 'url_verification', token: 'verify-me', challenge: 'c-123' }))), { challenge: 'c-123' });

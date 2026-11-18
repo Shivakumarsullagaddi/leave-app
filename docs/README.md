@@ -6,7 +6,7 @@ Project documentation that is not in the code. Start with **SESSION.md** when yo
 |---|---|
 | [SESSION.md](SESSION.md) | The hand-over file. What is built, what is uncommitted, how to run, what to do next. Update it at the end of every session. |
 | [slack-integration.md](slack-integration.md) | The Leave app in Slack: setup steps, commands, card design, the 3-second timeout, how a Slack user is matched to an employee in production. |
-| [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md) | **Performance & reliability roadmap:** fast modal/submission, atomic concurrency, edge-case handling, test cases, 4-week implementation. |
+| [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md) | Slack speed, first-decision-is-final, Sheets-dashboard adoption and every edge case: what was built, real Apps Script limits, how to switch it on. |
 | [../README.md](../README.md) | Architecture and folder layout (repo root). |
 | [../CLAUDE.md](../CLAUDE.md) | Rules for Claude Code and the deployment checklist (git-ignored, lives only on this machine). |
 

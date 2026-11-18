@@ -130,8 +130,9 @@ function makeEnv(opts) {
       newConditionalFormatRule: () => noop(), BandingTheme: { LIGHT_GREY: 'LIGHT_GREY' },
     },
     PropertiesService: { getScriptProperties: () => ({
-      getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = v; }, deleteProperty: (k) => { delete props[k]; } }) },
-    LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
+      getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = v; }, deleteProperty: (k) => { delete props[k]; },
+      getProperties: () => Object.assign({}, props) }) },
+    LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }), getUserLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
     Session: { getActiveUser: () => ({ getEmail: () => env.user }) },
     MailApp: { sendEmail: (m) => env.mail.push(m) },
     UrlFetchApp: { fetch: (u, o) => {
@@ -150,11 +151,13 @@ function makeEnv(opts) {
         const dm = (u) => String(u).replace(/^U/, 'D-U');
         const reply = (env.slackReply && env.slackReply(method, payload)) ||
           (method === 'chat.postMessage' ? { ok: true, channel: /^U/.test(payload.channel) ? dm(payload.channel) : payload.channel, ts: 'ts-' + env.slack.length }
-            : method === 'conversations.open' ? { ok: true, channel: { id: dm(payload.users) } } : { ok: true });
+            : method === 'conversations.open' ? { ok: true, channel: { id: dm(payload.users) } }
+            : method === 'views.open' ? { ok: true, view: { id: 'V-' + env.slack.length, hash: 'h' } } : { ok: true });
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify(reply),
           getAllHeaders: () => ({ 'x-oauth-scopes': env.slackScopes || 'commands,users:read,users:read.email,chat:write,im:write' }) };
       }
-      env.fetches.push(JSON.parse(o.payload)); return { getResponseCode: () => 200, getContentText: () => 'ok' }; } },
+      env.fetches.push(JSON.parse(o.payload)); return { getResponseCode: () => 200, getContentText: () => 'ok' }; },
+      fetchAll(requests) { return requests.map((r) => this.fetch(r.url, r)); } },
     ContentService: {
       MimeType: { JSON: 'application/json' },
       createTextOutput: (text) => ({ text, mime: 'text/plain', setMimeType(m) { this.mime = m; return this; }, getContent() { return this.text; } }),
@@ -163,7 +166,7 @@ function makeEnv(opts) {
     CacheService: { getScriptCache: () => {
       const get = (k) => { const e = env.cache[k]; return e && e.exp > Date.parse(env.today) ? e.v : null; };
       const put = (k, v, sec) => { env.cache[k] = { v: String(v), exp: Date.parse(env.today) + (sec || 600) * 1000 }; };
-      return { get, put, remove: (k) => { delete env.cache[k]; },
+      return { get, put, remove: (k) => { delete env.cache[k]; }, removeAll: (keys) => keys.forEach((k) => { delete env.cache[k]; }),
         putAll: (obj, sec) => Object.keys(obj).forEach((k) => put(k, obj[k], sec)),
         getAll: (keys) => { const out = {}; keys.forEach((k) => { const v = get(k); if (v !== null) out[k] = v; }); return out; } };
     } },

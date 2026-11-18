@@ -44,6 +44,21 @@ const BalanceService = (() => {
   const commit  = (empId, typeId, year, days) => change(empId, typeId, year, { pending: -days, used: days });
   const revert  = (empId, typeId, year, days) => change(empId, typeId, year, { used: -days });
 
+  /**
+   * Sets used / pending for one person, type and year from LeaveRequests (paid days of APPROVED / PENDING).
+   * Used when a status was changed outside Leave Desk, where we can't know what the other tool did to
+   * the balance; recomputing from the requests gives the same answer however often it runs.
+   */
+  function reconcile(empId, typeId, year) {
+    const mine = Db.table('LeaveRequests').where((r) => r.emp_id === empId && r.type_id === typeId && DateUtil.year(r.start_date) === Number(year));
+    const paidOf = (status) => mine.filter((r) => r.status === status).reduce((sum, r) => sum + n(r.paid_days), 0);
+    const b = findOrCreate(empId, typeId, year);
+    const next = { used: paidOf('APPROVED'), pending: paidOf('PENDING') };
+    next.available = available(Object.assign({}, b, next));
+    next.updated_at = DateUtil.now();
+    return table().update(b.bal_id, next);
+  }
+
   /** How many of `days` the balance covers; the rest is Loss of Pay. */
   function split(empId, typeId, year, days) {
     const b = find(empId, typeId, year) || {};
@@ -115,5 +130,5 @@ const BalanceService = (() => {
     return fixed;
   }
 
-  return { hold, release, commit, revert, split, summary, ensureYear, adjust, recalcAll };
+  return { hold, release, commit, revert, reconcile, split, summary, ensureYear, adjust, recalcAll };
 })();

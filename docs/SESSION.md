@@ -1,6 +1,6 @@
 # Leave Desk — session hand-over
 
-Last updated: 2026-11-16 (session "Session leave desk").
+Last updated: 2026-11-18 (session "Slack leave desk docs").
 Read this first in a new session. Then read `docs/slack-integration.md` if the work touches Slack.
 
 ## 1. What the product is
@@ -17,7 +17,7 @@ Leave Desk is Darukaa.Earth's internal leave-management app on Google Workspace.
 
 | Who applies | Who is asked | Outcome |
 |---|---|---|
-| Employee / Intern | Team Lead **and** team C-suite **and** the admin, in parallel | First approval approves; any rejection rejects, until the leave starts |
+| Employee / Intern | Team Lead **and** team C-suite **and** the admin, in parallel | **The first decision is final** (approve or reject); the others are closed out (`DECISION_LOCK = FIRST_DECISION`, since 2026-11-18). `LEAVE_START` keeps the old rule. |
 | Team Lead | Their team's C-suite **and** the admin, in parallel | Same rule |
 | C-suite | Nobody | Auto-approved |
 
@@ -115,7 +115,17 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 
 2026-11-17: **Daily leave post** like Vacation Tracker (`SlackDaily.gs`, `test/daily.test.js`). Settings `SLACK_DAILY_CHANNEL` (test channel C0CJK6ELW2Y) and `SLACK_DAILY_TIME` (11:00, exact minute). Plan: run it in the test channel, then switch to #ooo once people apply through Leave Desk, run side by side with Vacation Tracker for a few days, then turn Vacation Tracker's notification off.
 
+2026-11-18: **Slack speed, determinism, edge cases** (full write-up: [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md)).
+- Error replies no longer send `blocks:[null]` (that was `invalid_command_response`).
+- Refresh pre-links every employee to Slack by email (parallel `fetchAll`), so the first `/leavedesk` is a cache hit; a cache miss opens a loading modal first, and errors show in the modal.
+- Send creates no trigger and takes no lock (queue = one Script Property per job, run in order by the minute trigger); overlap, weekend-only and no-approver are refused in the form.
+- First decision is final: instant claim in Slack, sheet-level refusal naming who decided, all approver cards closed together on settle.
+- Sheets dashboard decisions are adopted by the minute job (approvers closed, balance reconciled, requester told, cards closed, audited).
+- `clearTestData` and the "Setup Slack" menu item were removed from Setup.gs by the user (uncommitted at the time of writing). `clearTestData` also wiped LeaveBalances; don't bring it back as written.
+
 ## 7. Next steps (in order)
+
+0. **User:** push + update deployment, set Settings `DECISION_LOCK` = `FIRST_DECISION`, run `setupSlack()` once, test from two Slack accounts.
 
 1. **User:** in Slack app settings add Bot Token Scope `im:write`, reinstall, paste the new token into `SLACK_BOT_TOKEN`; optionally add commands `/leave-balance`, `/leave-requests` (same Request URL); set the `/leavedesk` usage hint to `[balance | requests | help]`.
 2. **User:** `npx clasp push --force` (ask), update the existing deployment, run `setupSlack()` in the editor, then test `/leavedesk balance` from the Leave app's Messages tab.

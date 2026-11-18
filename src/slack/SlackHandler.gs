@@ -8,9 +8,14 @@
  *   Send request                     posts the requester's card at once, files it in the background
  *   Approve / Reject buttons         open a comment modal; the decision is filed in the background
  *
- * Slack allows 3 seconds. Nothing here reads the spreadsheet except on a person's very first
- * contact, nothing creates a trigger except Send / Approve / Reject, and every phase is timed
- * (see timing()) so a slow reply can be explained from the Executions log. handle() never throws.
+ * Slack allows 3 seconds. Nothing here reads the spreadsheet (the background refresh links every
+ * employee to Slack and caches them first), nothing creates a trigger (queued work is picked up by the
+ * once-a-minute trigger), and every phase is timed (see timing()) so a slow reply can be explained
+ * from the Executions log. handle() never throws.
+ *
+ * Determinism: the first Approve/Reject submitted in Slack claims the request (SlackCache.claim);
+ * anyone after that is told who decided, at once, without a modal. Decisions are filed one at a time
+ * in the order they were sent, and the sheet (under a lock) has the final word.
  */
 const SlackHandler = (() => {
   const ERROR_BLOCK = { leave_apply: 'start', leave_decide: 'comment' };
@@ -62,28 +67,66 @@ const SlackHandler = (() => {
     lap('token');
   }
 
-  /** Snapshot for a Slack user: cache first; the sheet only on first contact. */
+  /** Snapshot from the cache only (the normal case once setupSlack / the refresh has run). */
+  function cachedSnapshot_(slackUserId) {
+    const snap = SlackCache.snapshot(SlackCache.empIdForUser(slackUserId));
+    if (snap) lap('snapshot(cache)');
+    return snap;
+  }
+
+  /** Snapshot for a Slack user: cache first; the sheet only when the person is not cached yet. */
   function snapshotFor_(slackUserId) {
+    const cached = cachedSnapshot_(slackUserId);
+    if (cached) return cached;
     let empId = SlackCache.empIdForUser(slackUserId);
-    const cached = SlackCache.snapshot(empId);
-    if (cached) { lap('snapshot(cache)'); return cached; }
     if (!empId) {
-      const info = SlackBot.getUser(slackUserId);
+      let info;
+      try { info = SlackBot.getUser(slackUserId); } catch (err) {
+        if (/user_not_found/.test(err.message)) throw Errors.notRegistered('');
+        throw err;
+      }
       lap('users.info');
       const email = info.user && info.user.profile && info.user.profile.email;
-      if (!email) throw Errors.config('Slack did not share your email. The Leave app needs the users:read.email scope; reinstall it after adding.');
+      if (!email) throw Errors.config('Slack did not share your email with the Leave app. A Slack admin must add the users:read.email scope (OAuth & Permissions) and reinstall the app.');
       const emp = Directory.byEmail(email);
       if (!emp) throw Errors.notRegistered(email);
       empId = emp.emp_id;
       SlackCache.linkUser(slackUserId, empId);
       SlackBot.rememberUser(email, slackUserId);
       // Written to the Employees tab by the minute trigger; no trigger is created on this fast path.
-      if (emp.slack_user_id !== slackUserId) SlackJobs.enqueue({ kind: 'link', emp_id: empId, slack_user_id: slackUserId }, { kick: false });
+      if (emp.slack_user_id !== slackUserId) SlackJobs.enqueue({ kind: 'link', emp_id: empId, slack_user_id: slackUserId });
     }
     const snap = SlackCache.load(empId);
     lap('snapshot(sheet)');
     if (!snap) throw Errors.notRegistered('');
     return snap;
+  }
+
+  /**
+   * Opens the Apply form. Cached person: straight away. Not cached yet: a "Getting your balance…"
+   * modal opens at once (trigger_ids expire after 3 s), the sheet is read, then the modal becomes the
+   * form — or explains the problem (not registered, missing scope) instead of a vanishing error.
+   */
+  function openApply_(triggerId, slackUserId) {
+    const fast = cachedSnapshot_(slackUserId);
+    if (fast) {
+      SlackBot.openModal(triggerId, SlackCards.applyModal(fast));
+      lap('views.open');
+      return null;
+    }
+    const opened = SlackBot.openModal(triggerId, SlackCards.loadingModal());
+    lap('views.open(loading)');
+    const viewId = opened.view && opened.view.id;
+    try {
+      const snap = snapshotFor_(slackUserId);
+      SlackBot.updateView(viewId, null, SlackCards.applyModal(snap));
+      lap('views.update');
+    } catch (err) {
+      if (!(err instanceof AppError)) console.error('SlackHandler: apply for ' + slackUserId + ': ' + (err.stack || err));
+      const text = err instanceof AppError ? err.message : 'Something went wrong: ' + (err && err.message ? err.message : err);
+      SlackBot.updateView(viewId, null, SlackCards.messageModal('Leave Desk', '⚠️ ' + text));
+    }
+    return null;
   }
 
   /** "apply" | "balance" | "requests" | "help", from the command name first, then the first word of the text. */
@@ -97,12 +140,8 @@ const SlackHandler = (() => {
 
   function slashCommand_(p) {
     const picked = actionFor_(p.command, p.text);
-    const snap = snapshotFor_(p.user_id);
-    if (picked.action === 'apply') {
-      SlackBot.openModal(p.trigger_id, SlackCards.applyModal(snap));
-      lap('views.open');
-      return null;
-    }
+    if (picked.action === 'apply') return openApply_(p.trigger_id, p.user_id);
+    const snap = picked.action === 'help' ? null : snapshotFor_(p.user_id);
     const meta = {
       command: (p.command + ' ' + (p.text || '')).trim(), user: p.user_id, appUrl: SlackBot.prop('APP_URL'),
       base: String(p.command || '').replace(/-(balance|requests|help)$/, ''),
@@ -131,13 +170,18 @@ const SlackHandler = (() => {
       lap('views.update');
       return null;
     }
-    if (a.action_id === 'apply') {
-      SlackBot.openModal(p.trigger_id, SlackCards.applyModal(snapshotFor_(p.user.id)));
-      lap('views.open');
-      return null;
-    }
+    if (a.action_id === 'apply') return openApply_(p.trigger_id, p.user.id);
     if (a.action_id === 'approve' || a.action_id === 'reject') {
       const v = JSON.parse(a.value);
+      // Someone already decided (or this person already did): say so on the card at once, no modal.
+      const taken = SlackCache.firstIsFinal() ? SlackCache.claimOf(v.req_id) : null;
+      if (taken) {
+        const channel = p.container && p.container.channel_id;
+        const ts = p.container && p.container.message_ts;
+        if (channel && ts) SlackBot.updateMessage(channel, ts, SlackCards.claimText(taken, p.user.id).replace(/\*/g, ''), SlackCards.claimedCard(v, taken, p.user.id));
+        lap('chat.update(claimed)');
+        return null;
+      }
       SlackBot.openModal(p.trigger_id, SlackCards.decideModal({
         req_id: v.req_id, decision: a.action_id === 'approve' ? 'APPROVED' : 'REJECTED', who: v.who, when: v.when, type: v.type || '', days: v.days || '',
         channel: p.container && p.container.channel_id || '', ts: p.container && p.container.message_ts || '',
@@ -157,6 +201,11 @@ const SlackHandler = (() => {
     if (input.end_date < input.start_date) { const errors = { end: 'The last day is before the first day.' }; return { response_action: 'errors', errors: errors }; }
     const empId = p.view.private_metadata;
     const snap = SlackCache.snapshot(empId);
+    // Checked here from the cache so a mistake stays in the form (the job checks again against the sheet).
+    if (snap) {
+      const problem = cachedProblem_(snap, s);
+      if (problem) return { response_action: 'errors', errors: { end: problem } };
+    }
     const card = {
       employee: snap ? snap.name : (p.user.name || 'You'), role: snap ? SlackCards.personRole(snap) : '', team: snap ? snap.team : '',
       type: v.type.v.selected_option.text.text, start_date: input.start_date, end_date: input.end_date, reason: input.reason,
@@ -176,14 +225,40 @@ const SlackHandler = (() => {
     lap('chat.postMessage');
     SlackJobs.enqueue({ kind: 'submit', emp_id: empId, slack_user_id: p.user.id, input: input, card: card,
       channel: posted ? posted.channel : '', ts: posted ? posted.ts : '' });
+    if (snap && card.days !== undefined) {
+      SlackCache.addPending(empId, { req_id: '', emp_id: empId, employee: card.employee, type: card.type, type_id: input.type_id,
+        start_date: input.start_date, end_date: input.end_date, days: Number(card.days) || 0, lop: Number(card.lop) || 0,
+        status: card.status, reason: input.reason, submitted_at: card.submitted_at, approvers: card.approvers },
+      Math.max(0, (Number(card.days) || 0) - (Number(card.lop) || 0)));
+    }
     lap('enqueue');
     return { response_action: 'clear' };
+  }
+
+  /** What the sheet would refuse, judged from the cached snapshot: overlap, weekend-only, no approver. '' if fine. */
+  function cachedProblem_(snap, s) {
+    const clash = (snap.requests || []).find((r) => (r.status === 'PENDING' || r.status === 'APPROVED') &&
+      DateUtil.overlaps(r.start_date, r.end_date, s.start, s.end));
+    if (clash) return 'You already have leave on some of these dates' + (clash.req_id ? ' (' + clash.req_id + ')' : ' (just sent)') + '.';
+    if (DateUtil.year(s.start) !== DateUtil.year(s.end)) return 'Leave can’t run into the next year. Send one request for each year.';
+    if (SlackCards.quote(snap, s).days <= 0) return 'These dates are all weekends or holidays, so no leave is needed.';
+    if (snap.approvers && !snap.approvers.length) return 'No approver is set up for your team yet. Ask the admin.';
+    return '';
   }
 
   function decideSubmission_(p) {
     const meta = JSON.parse(p.view.private_metadata);
     const comment = String((p.view.state.values.comment.v && p.view.state.values.comment.v.value) || '').trim();
     if (meta.decision === 'REJECTED' && !comment) throw Errors.invalid('Add a short reason when you reject.');
+    if (SlackCache.firstIsFinal()) {
+      const me = SlackCache.snapshot(SlackCache.empIdForUser(p.user.id));
+      const result = SlackCache.claim(meta.req_id, { slack_user_id: p.user.id, by: me ? me.name : (p.user.name || ''), decision: meta.decision, at: DateUtil.now() });
+      lap('claim');
+      if (!result.won) {
+        if (result.claim.slack_user_id === p.user.id && !result.claim.final) return { response_action: 'clear' };   // double submit
+        return { response_action: 'errors', errors: { comment: SlackCards.claimText(result.claim, p.user.id).replace(/\*/g, '') } };
+      }
+    }
     SlackJobs.enqueue({ kind: 'decide', slack_user_id: p.user.id, req_id: meta.req_id, decision: meta.decision, comment: comment,
       who: meta.who, when: meta.when, channel: meta.channel, ts: meta.ts });
     lap('enqueue');

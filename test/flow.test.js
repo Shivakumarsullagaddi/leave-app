@@ -84,12 +84,22 @@ assert.strictEqual(bal('E903', 'LT-PL').pending, 0);
 refused(run(`apiDecide('', '${r1.req_id}','APPROVED','again')`), 'CONFLICT', 'second decision by same person');
 console.log('✓ first approval → APPROVED; days moved pending → used');
 
-// --- Test CXO also approves later: both on record
+// --- first decision is final (DECISION_LOCK = FIRST_DECISION, the default): Test CXO is closed out and told who decided
 viewAs('E901');
 env.today = '2026-11-03T09:00:00Z'; // 14:30 IST
-const d2 = ok(run(`apiDecide('', '${r1.req_id}','APPROVED','')`), 'cxo approve');
-assert.strictEqual(d2.status, 'APPROVED');
-console.log('✓ both approvals on record:', d2.approvals.map((a) => a.name + ' ' + a.decision + ' ' + a.decided_at).join(' | '));
+const late = run(`apiDecide('', '${r1.req_id}','REJECTED','Changed my mind')`);
+refused(late, 'CONFLICT', 'reject after the first approval');
+assert.ok(/Already approved by Test Lead at 2026-11-03 10:30\. The first decision is final/.test(late.error), late.error);
+refused(run(`apiDecide('', '${r1.req_id}','APPROVED','')`), 'CONFLICT', 'second approval after the first');
+assert.strictEqual(run(`Db.refresh(); JSON.stringify(Db.table('Approvals').where((a) => a.req_id === '${r1.req_id}').map((a) => a.approver_id + ':' + a.decision))`),
+  JSON.stringify(['E902:APPROVED', 'E901:NO_ACTION']), 'the other approver is closed out');
+assert.strictEqual(bal('E903', 'LT-PL').used, 3, 'balance untouched by the refused rejection');
+boot = ok(run("apiBootstrap('')"), 'boot cxo');
+assert.ok(!boot.inbox.waiting.some((r) => r.req_id === r1.req_id), 'decided request leaves the CXO inbox');
+console.log('✓ first decision is final: CXO refused with', JSON.stringify(late.error));
+
+// --- the old rule is still available: DECISION_LOCK = LEAVE_START (an approval can be overturned until the leave starts)
+run("Db.refresh(); Db.table('Settings').update('DECISION_LOCK', { value: 'LEAVE_START' })");
 
 // --- approve then reject → rejected, balance reverted
 viewAs('E011');
@@ -114,6 +124,7 @@ refused(run(`apiDecide('', '${r3.req_id}','REJECTED','late')`), 'CONFLICT', 'rej
 boot = ok(run("apiBootstrap('')"), 'boot guneet');
 assert.ok(!boot.inbox.waiting.some((r) => r.req_id === r3.req_id));
 console.log('✓ locked request leaves the inbox; Guneet waiting:', boot.inbox.waiting.map((r) => r.req_id).join(', '));
+run("Db.refresh(); Db.table('Settings').update('DECISION_LOCK', { value: 'FIRST_DECISION' })");
 
 // --- cancel
 viewAs('E011');
