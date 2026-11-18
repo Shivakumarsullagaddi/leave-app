@@ -32,6 +32,13 @@ const requestsOf = (emp) => run(`Db.refresh(); Db.table('LeaveRequests').where((
 assert.deepStrictEqual(asJson(post({}, 'token=abc&command=%2Fleavedesk')), { ok: false, error: 'Not found' });
 console.log('✓ unknown form body is answered, not thrown');
 
+// ---- an error reply is a valid ephemeral: text only, never blocks:[null] (Slack: invalid_command_response)
+const errReply = asJson(slash('', 'U-EMP', { token: 'wrong-token' }));
+assert.strictEqual(errReply.response_type, 'ephemeral');
+assert.ok(/did not come from the Leave app/.test(errReply.text), errReply.text);
+assert.ok(!('blocks' in errReply) || errReply.blocks.every(Boolean), 'blocks must not contain null: ' + flat(errReply.blocks));
+console.log('✓ a slash-command error returns a clean ephemeral (no null blocks)');
+
 // ---- setupSlack: installs the minute trigger once, warms the cache
 run('setupSlack()'); run('setupSlack()');
 assert.strictEqual(env.triggers.filter((t) => t.kind === 'minute').length, 1);

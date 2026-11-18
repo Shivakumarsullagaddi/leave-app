@@ -90,8 +90,6 @@ const SlackDaily = (() => {
       .concat(dayBlocks(today, 'TODAY', leaves, ctx), [{ type: 'divider' }],
         dayBlocks(next, dayName(next).toUpperCase(), leaves, ctx), [{ type: 'divider' }],
         [{ type: 'context', elements: [md('Only approved leave is listed · ' + esc(LD_CONFIG.APP_NAME))] }]);
-    const appUrl = SlackBot.prop('APP_URL');
-    if (appUrl) blocks.splice(blocks.length - 1, 0, { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open Leave Desk' }, url: appUrl, action_id: 'open_link' }] });
     const text = 'Daily leave update: ' + count(today) + ' on leave today, ' + count(next) + ' on ' + dayName(next) + '.';
     return { text: text, blocks: blocks, today: today, next: next };
   }

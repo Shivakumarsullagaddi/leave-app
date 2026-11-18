@@ -287,9 +287,14 @@ const SlackCards = (() => {
    */
   function reply(meta, text, blocks) {
     const m = meta || {};
-    if (m.inAppDm) return { response_type: 'in_channel', text: text, blocks: blocks };
-    const asked = m.command ? [context('`' + esc(m.command) + '` · asked by ' + (m.user ? '<@' + m.user + '>' : 'you') + ' · only you can see this reply')] : [];
-    return { response_type: 'ephemeral', text: text, blocks: asked.concat(blocks) };
+    const asked = (m.command && !m.inAppDm)
+      ? [context('`' + esc(m.command) + '` · asked by ' + (m.user ? '<@' + m.user + '>' : 'you') + ' · only you can see this reply')] : [];
+    // Drop any missing blocks: Slack rejects a reply whose blocks array holds a null (invalid_command_response),
+    // and an error reply (ephemeral with text only) carries no blocks at all.
+    const body = asked.concat((blocks || []).filter(Boolean));
+    const out = { response_type: m.inAppDm ? 'in_channel' : 'ephemeral', text: text };
+    if (body.length) out.blocks = body;
+    return out;
   }
   const ephemeral = (text, blocks) => reply(null, text, blocks);
 
