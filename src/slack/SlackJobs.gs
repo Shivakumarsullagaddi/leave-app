@@ -52,7 +52,24 @@ const SlackJobs = (() => {
 
   const triggers = () => ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === TRIGGER);
   const isInstalled = () => triggers().some((t) => t.getUniqueId() === props().getProperty(MINUTE_TRIGGER));
+
+  // Edits typed into the sheet (an email, a team, a holiday …) reach Slack without running setupSlack:
+  // the on-change trigger only records "data changed"; the next minute's run refreshes the cache.
+  const WATCH = 'slackSheetChanged';
+  const isWatching = () => ScriptApp.getProjectTriggers().some((t) => t.getHandlerFunction() === WATCH);
+  function watchSheet() {
+    if (isWatching()) return false;
+    try {
+      ScriptApp.newTrigger(WATCH).forSpreadsheet(Db.book()).onChange().create();
+      return true;
+    } catch (err) {
+      console.error('SlackJobs: could not watch the sheet: ' + err.message);
+      return false;
+    }
+  }
+
   function install() {
+    watchSheet();
     if (isInstalled()) return false;
     const t = ScriptApp.newTrigger(TRIGGER).timeBased().everyMinutes(1).create();
     props().setProperty(MINUTE_TRIGGER, t.getUniqueId());
@@ -205,8 +222,11 @@ const SlackJobs = (() => {
     home(job) { rememberHomeUser(job.slack_user_id); },
   };
 
-  return { enqueue, runAll, install, isInstalled, rememberHomeUser };
+  return { enqueue, runAll, install, isInstalled, isWatching, rememberHomeUser };
 })();
 
 /** Trigger target: the once-a-minute runner. */
 function slackRunJobs() { return SlackJobs.runAll(); }
+
+/** Trigger target: someone edited the sheet by hand (cell edit, row added or deleted). Cheap on purpose. */
+function slackSheetChanged() { Db.markChanged(true); }

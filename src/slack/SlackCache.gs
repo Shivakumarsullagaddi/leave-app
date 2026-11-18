@@ -96,10 +96,11 @@ const SlackCache = (() => {
   }
 
   const markDirty = () => props().setProperty('SLACK_DIRTY', '1');
+  /** Refresh needed: marked dirty, data changed since the last refresh read it (app or sheet edit), or ten minutes old. */
   function isStale() {
     if (props().getProperty('SLACK_DIRTY')) return true;
     const at = Number(props().getProperty('SLACK_REFRESHED_AT') || 0);
-    return Date.now() - at > STALE_MS;
+    return Db.changedAt() > at || Date.now() - at > STALE_MS;
   }
 
   function brief(r, names, typeName, approvalsByReq) {
@@ -218,11 +219,12 @@ const SlackCache = (() => {
 
   /** Rewrites everyone's snapshot. Called by the background job, never by a Slack request. */
   function refresh() {
+    const started = Date.now();   // an edit made while this runs is newer than this, so the next minute refreshes again
     Db.refresh();
     const ids = build(null, linkByEmail());
     cache().put(POLICY, DecisionPolicy.firstIsFinal() ? 'FIRST_DECISION' : 'LEAVE_START', TTL);
     props().deleteProperty('SLACK_DIRTY');
-    props().setProperty('SLACK_REFRESHED_AT', String(Date.now()));
+    props().setProperty('SLACK_REFRESHED_AT', String(started));
     return ids.length;
   }
 

@@ -28,6 +28,10 @@ was built and the real limits.
 ### 3.1 First `/leavedesk` never times out
 - `SlackCache.refresh()` (setupSlack + every 10 min) links **every active employee** to their Slack ID by work email, in one parallel batch (`UrlFetchApp.fetchAll`). It also caches an **email → employee directory**. Slack IDs live **in the cache only**: they are never written to the sheet and never printed by `checkSlack`. A `slack_user_id` typed by an admin still wins. `forgetSlackIds()` clears IDs an older version wrote.
 - Result: even a person's very first command is a cache hit. Path: verify token → cache → `views.open`. **One Slack call, no sheet read.**
+- **Changes reach Slack by themselves, within a minute; nobody re-runs `setupSlack`.**
+  - Every write through Leave Desk (Admin page, jobs, setup functions) records `DATA_CHANGED_AT` (`Db.markChanged`, once per run).
+  - Edits typed into the sheet by hand fire an installable **on-change trigger** (`slackSheetChanged`, installed by `setupSlack` and self-healed by the minute job) that records the same thing.
+  - The minute job refreshes the cache whenever data changed after its last refresh (or it is 10 minutes old). The Sheets dashboard's API writes don't fire the trigger; the 10-minute refresh and dashboard adoption (3.4) cover them.
 - **A Slack request never reads the sheet**, so it can't time out:
   - Slack member not in Employees: `users.info` + email directory → explained in a modal at once. Repeat tries within 2 minutes skip `users.info`, and the cache is marked for refresh so a just-added person works a minute later.
   - Known person whose snapshot was evicted: a **"Setting up your profile…" modal opens at once**, and the background job turns it into the form (within a minute).

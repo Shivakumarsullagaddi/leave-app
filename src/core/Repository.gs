@@ -58,6 +58,7 @@ function Repository(name) {
     const sh = sheet();
     if (sh.getMaxRows() < rowNumber) sh.insertRowsAfter(sh.getMaxRows(), rowNumber - sh.getMaxRows());
     sh.getRange(rowNumber, 1, 1, headers.length).setValues([encode(obj)]);
+    Db.markChanged();
   }
 
   // ---- reads ----

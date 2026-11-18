@@ -445,6 +445,33 @@ assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903', 'still linked, from 
 run("Db.table('Employees').update('E902', { slack_user_id: '' })"); run('SlackCache.refresh()');
 console.log('✓ forgetSlackIds clears only the IDs Leave Desk wrote; links keep working from the cache');
 
+// ---- an email typed into the sheet by hand reaches Slack by itself: on-change trigger marks it, the next minute's run refreshes
+assert.strictEqual(env.triggers.filter((t) => t.kind === 'change').length, 1, 'setupSlack installed one on-change trigger');
+run('setupSlack()');
+assert.strictEqual(env.triggers.filter((t) => t.kind === 'change').length, 1, 'never twice');
+env.today = '2026-11-16T05:05:00Z';
+run('SlackCache.refresh()');
+run("Db.table('Employees').update('E904', { email: 'outsider@darukaa.com' })");
+delete props.DATA_CHANGED_AT; delete props.SLACK_DIRTY;            // as if typed in the sheet by hand: the app itself wrote nothing
+delete env.cache['slack:user:U-OUT'];
+env.today = '2026-11-16T05:06:00Z';
+run('slackRunJobs()');
+assert.strictEqual(env.cache['slack:user:U-OUT'], undefined, 'without the trigger nobody would notice for ten minutes');
+run('slackSheetChanged()');                                        // what the on-change trigger runs
+env.today = '2026-11-16T05:07:00Z';
+run('slackRunJobs()');
+assert.strictEqual(env.cache['slack:user:U-OUT'].v, 'E904', 'new email linked to Slack within a minute — no setupSlack');
+// a change made through Leave Desk (Admin page, jobs, setup) records itself
+run('Db.refresh()');
+env.today = '2026-11-16T05:07:30Z';                                // the admin edits half a minute after that refresh
+run("Db.table('Employees').update('E904', { email: 'test.intern@leavedesk.test' })");
+assert.strictEqual(Number(props.DATA_CHANGED_AT), Date.parse('2026-11-16T05:07:30Z'), 'app writes record the change');
+env.today = '2026-11-16T05:08:00Z';
+run('slackRunJobs()');
+assert.strictEqual(env.cache['slack:user:U-OUT'], undefined, 'and the old link is dropped on the next run');
+env.today = '2026-11-16T05:00:00Z';
+console.log('✓ sheet edits by hand (on-change trigger) and by the Admin page reach Slack within a minute, no setupSlack needed');
+
 // ---- someone who left can't keep applying from an old snapshot
 run("Db.table('Employees').update('E904', { status: 'Inactive' })"); run('SlackCache.refresh()');
 assert.strictEqual(env.cache['slack:emp:E904'], undefined, 'snapshot of an inactive person removed');

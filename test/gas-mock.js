@@ -174,7 +174,7 @@ function makeEnv(opts) {
       getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }),
       newTrigger: (fn) => {
         const t = { fn, kind: '' };
-        const b = { timeBased: () => b, after: (ms) => { t.kind = 'once'; t.after = ms; return b; }, everyMinutes: () => { t.kind = 'minute'; return b; },
+        const b = { timeBased: () => b, forSpreadsheet: () => b, onChange: () => { t.kind = 'change'; return b; }, after: (ms) => { t.kind = 'once'; t.after = ms; return b; }, everyMinutes: () => { t.kind = 'minute'; return b; },
           everyDays: () => { t.kind = 'daily'; return b; }, atHour: (h) => { t.hour = h; return b; }, nearMinute: (m) => { t.minute = m; return b; }, inTimezone: (z) => { t.tz = z; return b; },
           create: () => { t.id = 'trg-' + (++env.triggerSeq); env.triggers.push(t); return { getUniqueId: () => t.id, getHandlerFunction: () => t.fn }; } };
         return b;

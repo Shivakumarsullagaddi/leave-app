@@ -48,6 +48,8 @@ function checkSlack() {
     ' → the Request URL in Slash Commands, Interactivity & Shortcuts (On) and Event Subscriptions (On, bot event app_home_opened)');
   const installed = SlackJobs.isInstalled();
   mark(installed, 'Background trigger ' + (installed ? 'installed (every minute)' : 'missing → run setupSlack once and allow the permission'));
+  const watching = SlackJobs.isWatching();
+  mark(watching, 'Sheet edits ' + (watching ? 'reach Slack automatically within a minute (no need to run setupSlack again)' : 'are not watched → run setupSlack once and allow the permission'));
   const lastRun = Number(SlackBot.prop('SLACK_LAST_RUN') || 0);
   const ago = lastRun ? Math.round((Date.now() - lastRun) / 60000) : -1;
   mark(ago >= 0 && ago <= 3, 'Background trigger last ran ' + (ago < 0 ? 'never' : ago + ' min ago') + (ago > 3 ? ' → check Triggers page for failures' : ''));
