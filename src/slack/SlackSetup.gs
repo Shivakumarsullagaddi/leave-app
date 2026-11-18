@@ -10,6 +10,29 @@ function setupSlack() {
   return checkSlack();
 }
 
+/**
+ * One-off clean-up: earlier versions wrote Slack member IDs into Employees.slack_user_id. Clears the ones
+ * Leave Desk wrote itself (AuditLog actor "slack"); IDs typed in by an admin are kept. The links keep
+ * working from the cache. Prints only a count.
+ */
+function forgetSlackIds() {
+  Db.refresh();
+  const written = {};
+  Db.table('AuditLog').where((l) => l.actor === 'slack' && l.entity === 'Employees' && l.field === 'slack_user_id')
+    .forEach((l) => { written[l.entity_id] = l.new_value; });
+  let cleared = 0;
+  Db.table('Employees').all().forEach((e) => {
+    if (e.slack_user_id && written[e.emp_id] === e.slack_user_id) {
+      Db.table('Employees').update(e.emp_id, { slack_user_id: '', updated_at: DateUtil.now() });
+      cleared++;
+    }
+  });
+  SlackCache.refresh();
+  const text = 'Cleared ' + cleared + ' Slack ID' + (cleared === 1 ? '' : 's') + ' that Leave Desk had written to Employees. People are still found on Slack by email (kept in the cache only).';
+  SetupUi.notify('Slack IDs', text);
+  return cleared;
+}
+
 function checkSlack() {
   const NEEDED = ['commands', 'users:read', 'users:read.email', 'chat:write', 'im:write'];
   const lines = [];
@@ -46,9 +69,9 @@ function checkSlack() {
         : 'Scopes: ' + NEEDED.join(', '));
       const me = SetupUi.user();
       try {
-        const found = SlackBot.lookupByEmail(me);
+        SlackBot.lookupByEmail(me);   // throws if this email is not on Slack; the member ID itself is never printed
         const emp = Directory.byEmail(me);
-        mark(!!emp, me + ' is Slack member ' + found.user.id + (emp ? ' and ' + emp.name + ' (' + emp.emp_id + ') in Employees' : ' but is NOT in the Employees tab'));
+        mark(!!emp, me + ' is on Slack' + (emp ? ' and is ' + emp.name + ' in Employees' : ' but is NOT in the Employees tab'));
       } catch (e) {
         mark(false, me + ' → ' + e.message + ' (same email on Slack and in Employees?)');
       }

@@ -74,58 +74,75 @@ const SlackHandler = (() => {
     return snap;
   }
 
-  /** Snapshot for a Slack user: cache first; the sheet only when the person is not cached yet. */
-  function snapshotFor_(slackUserId) {
+  const notListed = (email) => new AppError('NOT_REGISTERED', (email ? email + ' is' : 'Your Slack account is') +
+    ' not in the Leave Desk directory. Ask the admin to add you — if they just did, try again in a minute.');
+
+  /**
+   * Who is this Slack user, from the cache only — never the sheet (a sheet read here is what pushed
+   * Slack past its 3 seconds). Returns { snap } when ready, or { empId | email } when only the background
+   * job can finish the lookup. Throws AppError when the answer is already known (not registered, scope).
+   */
+  function resolve_(slackUserId) {
     const cached = cachedSnapshot_(slackUserId);
-    if (cached) return cached;
+    if (cached) return { snap: cached };
+    if (SlackCache.isUnknown(slackUserId)) { lap('unknown(cache)'); throw notListed(''); }
     let empId = SlackCache.empIdForUser(slackUserId);
     if (!empId) {
       let info;
       try { info = SlackBot.getUser(slackUserId); } catch (err) {
-        if (/user_not_found/.test(err.message)) throw Errors.notRegistered('');
+        if (/user_not_found/.test(err.message)) { SlackCache.markUnknown(slackUserId); throw notListed(''); }
         throw err;
       }
       lap('users.info');
-      const email = info.user && info.user.profile && info.user.profile.email;
+      const email = String((info.user && info.user.profile && info.user.profile.email) || '').trim().toLowerCase();
       if (!email) throw Errors.config('Slack did not share your email with the Leave app. A Slack admin must add the users:read.email scope (OAuth & Permissions) and reinstall the app.');
-      const emp = Directory.byEmail(email);
-      if (!emp) throw Errors.notRegistered(email);
-      empId = emp.emp_id;
+      const index = SlackCache.emailIndex();
+      if (!index) return { email: email };          // directory not cached: the job decides
+      empId = index[email];
+      if (!empId) {
+        SlackCache.markUnknown(slackUserId);
+        SlackCache.markDirty();                       // the next minute's refresh picks up a just-added person
+        throw notListed(email);
+      }
       SlackCache.linkUser(slackUserId, empId);
       SlackBot.rememberUser(email, slackUserId);
-      // Written to the Employees tab by the minute trigger; no trigger is created on this fast path.
-      if (emp.slack_user_id !== slackUserId) SlackJobs.enqueue({ kind: 'link', emp_id: empId, slack_user_id: slackUserId });
     }
-    const snap = SlackCache.load(empId);
-    lap('snapshot(sheet)');
-    if (!snap) throw Errors.notRegistered('');
-    return snap;
+    const snap = SlackCache.snapshot(empId);
+    if (snap) { lap('snapshot(cache)'); return { snap: snap }; }
+    return { empId: empId };
+  }
+
+  /** Snapshot for replies that can't wait for the job (balance, requests): a clear "try again in a minute" otherwise. */
+  function snapshotFor_(slackUserId) {
+    const r = resolve_(slackUserId);
+    if (r.snap) return r.snap;
+    SlackCache.markDirty();
+    throw new AppError('BUSY', 'Leave Desk is setting up your profile. Try again in a minute.');
   }
 
   /**
-   * Opens the Apply form. Cached person: straight away. Not cached yet: a "Getting your balance…"
-   * modal opens at once (trigger_ids expire after 3 s), the sheet is read, then the modal becomes the
-   * form — or explains the problem (not registered, missing scope) instead of a vanishing error.
+   * Opens the Apply form. Known person: the form at once. Known problem (not registered, scope): explained
+   * in a modal at once. Otherwise a "Setting up…" modal opens and the background job fills it in
+   * (within a minute) — the Slack request itself never reads the sheet, so it never times out.
    */
   function openApply_(triggerId, slackUserId) {
-    const fast = cachedSnapshot_(slackUserId);
-    if (fast) {
-      SlackBot.openModal(triggerId, SlackCards.applyModal(fast));
+    let r;
+    try { r = resolve_(slackUserId); } catch (err) {
+      if (!(err instanceof AppError)) throw err;
+      SlackBot.openModal(triggerId, SlackCards.messageModal('Leave Desk', '⚠️ ' + err.message));
+      lap('views.open(message)');
+      return null;
+    }
+    if (r.snap) {
+      SlackBot.openModal(triggerId, SlackCards.applyModal(r.snap));
       lap('views.open');
       return null;
     }
     const opened = SlackBot.openModal(triggerId, SlackCards.loadingModal());
     lap('views.open(loading)');
-    const viewId = opened.view && opened.view.id;
-    try {
-      const snap = snapshotFor_(slackUserId);
-      SlackBot.updateView(viewId, null, SlackCards.applyModal(snap));
-      lap('views.update');
-    } catch (err) {
-      if (!(err instanceof AppError)) console.error('SlackHandler: apply for ' + slackUserId + ': ' + (err.stack || err));
-      const text = err instanceof AppError ? err.message : 'Something went wrong: ' + (err && err.message ? err.message : err);
-      SlackBot.updateView(viewId, null, SlackCards.messageModal('Leave Desk', '⚠️ ' + text));
-    }
+    SlackJobs.enqueue({ kind: 'apply_view', view_id: opened.view && opened.view.id, slack_user_id: slackUserId, emp_id: r.empId || '', email: r.email || '' });
+    SlackCache.markDirty();
+    lap('enqueue');
     return null;
   }
 

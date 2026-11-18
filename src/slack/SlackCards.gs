@@ -198,10 +198,10 @@ const SlackCards = (() => {
     return '*' + esc(claim.by || 'Another approver') + '* ' + word + ' this' + (at ? ' at ' + esc(at) : '') + '. The first decision is final, so no action is needed from you.';
   }
 
-  /** Shown the instant /leavedesk arrives for someone not cached yet; replaced by the real form a moment later. */
+  /** Shown the instant /leavedesk arrives for someone the cache can't place yet; the background job fills it in. */
   function loadingModal() {
     return { type: 'modal', callback_id: 'leave_loading', title: plain('Apply for leave'), close: plain('Cancel'),
-      blocks: [section('⏳ *Getting your balance and approvers…*\nThis takes a few seconds the first time only.')] };
+      blocks: [section('⏳ *Setting up your Leave Desk profile…*\nKeep this window open — it turns into the leave form by itself within a minute. This happens only the first time.')] };
   }
 
   /** A modal that explains a problem (not registered, missing scope …) instead of a vanishing error. */

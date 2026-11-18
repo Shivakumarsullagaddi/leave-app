@@ -119,6 +119,7 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 - Error replies no longer send `blocks:[null]` (that was `invalid_command_response`).
 - Refresh pre-links every employee to Slack by email (parallel `fetchAll`), so the first `/leavedesk` is a cache hit; a cache miss opens a loading modal first, and errors show in the modal.
 - Send creates no trigger and takes no lock (queue = one Script Property per job, run in order by the minute trigger); overlap, weekend-only and no-approver are refused in the form.
+- Later the same day: a Slack request never reads the sheet (stranger answered from a cached email directory; evicted person gets a "Setting up…" modal filled by the job), so the timeout next to the "not in directory" modal is gone. Slack IDs live in the cache only: never written to Employees, never printed by checkSlack; run forgetSlackIds() once to clear IDs written earlier.
 - First decision is final: instant claim in Slack, sheet-level refusal naming who decided, all approver cards closed together on settle.
 - Sheets dashboard decisions are adopted by the minute job (approvers closed, balance reconciled, requester told, cards closed, audited).
 - `clearTestData` and the "Setup Slack" menu item were removed from Setup.gs by the user (uncommitted at the time of writing). `clearTestData` also wiped LeaveBalances; don't bring it back as written.

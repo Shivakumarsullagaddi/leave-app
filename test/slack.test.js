@@ -11,7 +11,8 @@ props.APP_URL = 'https://script.google.com/macros/s/TEST/exec';
 run("Db.table('Settings').update('SLACK_ENABLED', { value: 'TRUE' })");
 
 // Slack's directory: U-EMP = Test Employee (E903), U-LEAD = Test Lead (E902), U-CXO = Test CXO (E901), U-ADM = Leave Admin (E900)
-const SLACK = { 'U-EMP': 'shivakumar.u@darukaa.com', 'U-LEAD': 'shivakumarullagaddi56@gmail.com', 'U-CXO': 'shivakumarullagaddi855@gmail.com', 'U-ADM': 'admin@leavedesk.test' };
+const SLACK = { 'U-EMP': 'shivakumar.u@darukaa.com', 'U-LEAD': 'shivakumarullagaddi56@gmail.com', 'U-CXO': 'shivakumarullagaddi855@gmail.com', 'U-ADM': 'admin@leavedesk.test',
+  'U-OUT': 'outsider@darukaa.com' };   // on Slack, but not in Employees
 env.slackReply = (method, p) => {
   if (method === 'users.info') return SLACK[p.user] ? { ok: true, user: { profile: { email: SLACK[p.user] } } } : { ok: false, error: 'user_not_found' };
   if (method === 'users.lookupByEmail') { const id = Object.keys(SLACK).find((k) => SLACK[k] === p.email); return id ? { ok: true, user: { id } } : { ok: false, error: 'users_not_found' }; }
@@ -39,24 +40,28 @@ assert.ok(/did not come from the Leave app/.test(errReply.text), errReply.text);
 assert.ok(!('blocks' in errReply) || errReply.blocks.every(Boolean), 'blocks must not contain null: ' + flat(errReply.blocks));
 console.log('✓ a slash-command error returns a clean ephemeral (no null blocks)');
 
-// ---- setupSlack: installs the minute trigger once, links everyone to Slack by email (one parallel batch), warms the cache
+// ---- setupSlack: installs the minute trigger once, links everyone to Slack by email (one parallel batch, cache only), warms the cache
 run('setupSlack()');
 const lookups = calls('users.lookupByEmail').length;
-run('setupSlack()');
+const setupLines = run('setupSlack()');
 assert.strictEqual(env.triggers.filter((t) => t.kind === 'minute').length, 1);
 assert.ok(env.cache['slack:emp:E903'], 'snapshot warmed for E903');
-assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E903').slack_user_id"), 'U-EMP', 'Slack ID written to Employees before anyone typed a command');
-assert.strictEqual(run("Db.table('Employees').get('E900').slack_user_id"), 'U-ADM');
 assert.strictEqual(env.cache['slack:user:U-LEAD'].v, 'E902', 'Slack user → employee is cached for everyone');
+assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903');
+assert.strictEqual(run("Db.refresh(); Db.table('Employees').where((e) => e.slack_user_id).length"), 0, 'no Slack ID is ever written to the sheet');
 assert.strictEqual(calls('users.lookupByEmail').length, lookups + 1, 'second run looks nobody up again (hits and misses are remembered); the 1 is checkSlack verifying the signed-in person live');
-console.log('✓ setupSlack installs the trigger once, pre-links', lookups, 'emails in one batch and warms', Object.keys(env.cache).filter((k) => k.startsWith('slack:emp:')).length, 'snapshots');
+assert.ok(!/U-[A-Z]/.test(setupLines.join('\n')), 'checkSlack never prints a Slack member ID:\n' + setupLines.join('\n'));
+console.log('✓ setupSlack installs the trigger once, links', lookups - 1, 'emails in one batch (cache only, sheet untouched), prints no Slack IDs, warms', Object.keys(env.cache).filter((k) => k.startsWith('slack:emp:')).length, 'snapshots');
 
 // ---- first /leavedesk ever is answered from the cache: no users.info, no sheet, no trigger
 const triggersBefore = env.triggers.length;
 const callsBefore = env.slack.length;
+run('Db.refresh()');   // like a fresh Apps Script execution: nothing loaded yet
+const readsBefore = env.sheetReads();
 let out = slash('');
 assert.strictEqual(out, '', 'slash reply must be empty when a modal opens');
 assert.deepStrictEqual(env.slack.slice(callsBefore).map((c) => c.method), ['views.open'], 'one Slack call: the modal itself');
+assert.strictEqual(env.sheetReads(), readsBefore, 'no sheet read');
 assert.strictEqual(env.triggers.length, triggersBefore, 'no trigger created');
 assert.ok(/snapshot\(cache\)/.test(run('SlackHandler.timing()')), run('SlackHandler.timing()'));
 let view = last('views.open').payload.view;
@@ -69,16 +74,34 @@ const whoText = flat(view.blocks.find((b) => b.block_id === 'approvers'));
 assert.ok(/\*Who approves\*\\n⏳ \*Test Lead\* · Team Lead\\n⏳ \*Test CXO\* · C-suite\\n⏳ \*Leave Admin\* · Admin\\n_All are asked at the same time. Any one approval is enough._/.test(whoText), whoText);
 console.log('✓ /leavedesk: very first command opens the apply modal straight from the cache —', run('SlackHandler.timing()'));
 
-// ---- not cached (evicted, or added a minute ago): a loading modal opens at once, then becomes the form
+// ---- link evicted but snapshot cached: placed by the cached email directory — users.info + views.open, still no sheet
+delete env.cache['slack:user:U-ADM'];
+run('Db.refresh()');
+let reads = env.sheetReads();
+let mark = env.slack.length;
+out = slash('', 'U-ADM', { trigger_id: 'trig-link' });
+assert.strictEqual(out, '');
+assert.deepStrictEqual(env.slack.slice(mark).map((c) => c.method), ['users.info', 'views.open']);
+assert.strictEqual(last('views.open').payload.view.private_metadata, 'E900');
+assert.strictEqual(env.sheetReads(), reads, 'no sheet read');
+console.log('✓ link evicted: email directory in the cache places the person —', run('SlackHandler.timing()'));
+
+// ---- snapshot evicted too: a "Setting up…" modal opens at once and the background job fills it — the request never reads the sheet
 delete env.cache['slack:user:U-ADM']; delete env.cache['slack:emp:E900'];
+run('Db.refresh()');
+reads = env.sheetReads();
 out = slash('', 'U-ADM', { trigger_id: 'trig-miss' });
 assert.strictEqual(out, '');
-assert.strictEqual(last('views.open').payload.view.callback_id, 'leave_loading', 'something is on screen immediately');
+const loading = last('views.open').payload.view;
+assert.strictEqual(loading.callback_id, 'leave_loading', 'something is on screen immediately');
+assert.ok(/turns into the leave form by itself within a minute/.test(flat(loading.blocks)), flat(loading.blocks));
+assert.strictEqual(env.sheetReads(), reads, 'no sheet read inside the Slack request (that was the timeout)');
+assert.ok(/users\.info \d+ms · views\.open\(loading\) \d+ms · enqueue/.test(run('SlackHandler.timing()')), run('SlackHandler.timing()'));
+run('slackRunJobs()');
 let filled = last('views.update').payload;
 assert.ok(/^V-/.test(filled.view_id), 'views.update targets the opened modal: ' + filled.view_id);
 assert.strictEqual(filled.view.callback_id, 'leave_apply'); assert.strictEqual(filled.view.private_metadata, 'E900');
-assert.ok(/views\.open\(loading\) \d+ms · users\.info \d+ms · snapshot\(sheet\) \d+ms · views\.update/.test(run('SlackHandler.timing()')), run('SlackHandler.timing()'));
-console.log('✓ cache miss: loading modal first, then the form —', run('SlackHandler.timing()'));
+console.log('✓ cache miss: "Setting up…" modal at once, filled with the form by the job — no sheet read, no timeout');
 
 // ---- later commands: no users.info, no sheet read needed
 const before = env.slack.length;
@@ -115,15 +138,40 @@ console.log('✓ in_channel inside the app DM; /leave-balance and /leave-request
 // ---- refused: forged token, stranger
 out = asJson(slash('', 'U-EMP', { token: 'forged' }));
 assert.ok(/did not come from the Leave app/.test(out.text), out.text);
-out = slash('', 'U-NOBODY');
+// a real Slack member whose email is not in Employees (the screenshot case): answered from the cache —
+// one users.info + one views.open, no sheet read, so Slack never adds "operation_timeout"
+run('Db.refresh()');
+reads = env.sheetReads();
+mark = env.slack.length;
+out = slash('', 'U-OUT');
 assert.strictEqual(out, '', 'no ephemeral error: the explanation is in the modal');
-const nobody = last('views.update').payload.view;
+assert.deepStrictEqual(env.slack.slice(mark).map((c) => c.method), ['users.info', 'views.open'], 'message modal opened directly, no loading step');
+assert.strictEqual(env.sheetReads(), reads, 'no sheet read');
+const outsider = last('views.open').payload.view;
+assert.strictEqual(outsider.callback_id, 'leave_message');
+assert.ok(/outsider@darukaa\.com is not in the Leave Desk directory\. Ask the admin to add you — if they just did, try again in a minute\./.test(flat(outsider.blocks)), flat(outsider.blocks));
+mark = env.slack.length;
+slash('', 'U-OUT');
+assert.deepStrictEqual(env.slack.slice(mark).map((c) => c.method), ['views.open'], 'second try within two minutes: no users.info either');
+// the admin adds them: once the cache is refreshed (next minute, it was marked dirty) the form opens
+assert.strictEqual(props.SLACK_DIRTY, '1', 'a stranger marks the cache for refresh');
+run("Db.table('Employees').update('E904', { email: 'outsider@darukaa.com' })");
+env.today = '2026-11-16T05:03:00Z';   // the two-minute "not registered" memory has expired
+run('slackRunJobs()');
+slash('', 'U-OUT');
+assert.strictEqual(last('views.open').payload.view.callback_id, 'leave_apply', 'added person gets the form');
+assert.strictEqual(last('views.open').payload.view.private_metadata, 'E904');
+run("Db.table('Employees').update('E904', { email: 'test.intern@leavedesk.test' })"); run('SlackCache.refresh()');
+env.today = '2026-11-16T05:00:00Z';
+// someone Slack doesn't know at all
+out = slash('', 'U-NOBODY');
+const nobody = last('views.open').payload.view;
 assert.strictEqual(nobody.callback_id, 'leave_message');
 assert.ok(/⚠️/.test(flat(nobody.blocks)) && !/user_not_found/.test(flat(nobody.blocks)), flat(nobody.blocks));
 // balance for a stranger: a clear ephemeral, never a timeout
 out = asJson(slash('balance', 'U-NOBODY'));
 assert.strictEqual(out.response_type, 'ephemeral'); assert.ok(/⚠️/.test(out.text), out.text);
-console.log('✓ refused: forged token; unknown Slack user sees in the modal:', JSON.stringify(flat(nobody.blocks).match(/⚠️[^"]*/)[0]));
+console.log('✓ refused: forged token; Slack member not in Employees told in the modal from the cache (no timeout):', JSON.stringify(flat(outsider.blocks).match(/⚠️[^"]*/)[0]));
 
 // ---- Send request: card posted at once, nothing filed yet; the job files it and updates the card
 const submission = (start, end, user, extra) => interact({
@@ -377,13 +425,25 @@ assert.strictEqual(last('views.open') && env.cache['slack:user:U-EMP'].v, 'E901'
 run("Db.table('Employees').update('E901', { slack_user_id: '' })");
 run('SlackCache.refresh()');
 assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903', 'cleared rows heal themselves: U-EMP is linked back to E903 by email');
-assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E901').slack_user_id"), 'U-CXO', 'and E901 gets its own Slack ID back');
+assert.strictEqual(env.cache['slack:user:U-CXO'].v, 'E901', 'and E901 is found by its email again (in the cache)');
+assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E901').slack_user_id"), '', 'still nothing written to the sheet');
 // an ID that no row (and no email) claims any more is forgotten, not kept for six hours
 run("Db.table('Employees').update('E904', { slack_user_id: 'U-GHOST' })"); run('SlackCache.refresh()');
 assert.strictEqual(env.cache['slack:user:U-GHOST'].v, 'E904');
 run("Db.table('Employees').update('E904', { slack_user_id: '' })"); run('SlackCache.refresh()');
 assert.strictEqual(env.cache['slack:user:U-GHOST'], undefined, 'an ID removed from every row is forgotten');
 console.log('✓ sheet edits to slack_user_id take effect on refresh; cleared rows are re-linked by email; dropped IDs are forgotten');
+
+// ---- forgetSlackIds(): clears IDs an older version wrote (AuditLog actor "slack"), keeps one an admin typed in
+run(`Db.table('Employees').update('E903', { slack_user_id: 'U-EMP' });
+  Audit.log({ actor: 'slack', action: 'UPDATE', entity: 'Employees', entity_id: 'E903', field: 'slack_user_id', new_value: 'U-EMP' });
+  Db.table('Employees').update('E902', { slack_user_id: 'U-LEAD' });`);
+assert.strictEqual(run('forgetSlackIds()'), 1);
+assert.strictEqual(run("Db.refresh(); Db.table('Employees').get('E903').slack_user_id"), '', 'auto-written ID cleared');
+assert.strictEqual(run("Db.table('Employees').get('E902').slack_user_id"), 'U-LEAD', 'admin-typed ID kept');
+assert.strictEqual(env.cache['slack:user:U-EMP'].v, 'E903', 'still linked, from the cache');
+run("Db.table('Employees').update('E902', { slack_user_id: '' })"); run('SlackCache.refresh()');
+console.log('✓ forgetSlackIds clears only the IDs Leave Desk wrote; links keep working from the cache');
 
 // ---- someone who left can't keep applying from an old snapshot
 run("Db.table('Employees').update('E904', { status: 'Inactive' })"); run('SlackCache.refresh()');
@@ -425,6 +485,7 @@ console.log('✓ url_verification challenge echoed');
 env.user = 'shivakumar.u@darukaa.com';
 let lines = run('checkSlack()');
 assert.ok(lines.every((l) => l.charAt(0) !== '✘') && /Slack is ON/.test(lines[lines.length - 1]), lines.join('\n'));
+assert.ok(lines.some((l) => /shivakumar\.u@darukaa\.com is on Slack and is Test Employee in Employees/.test(l)) && !/U-[A-Z]/.test(lines.join('\n')), 'no Slack member ID printed: ' + lines.join('\n'));
 console.log('✓ checkSlack all green:\n   ' + lines.join('\n   '));
 env.slackScopes = 'commands,chat:write';
 delete props.SLACK_VERIFICATION_TOKEN;

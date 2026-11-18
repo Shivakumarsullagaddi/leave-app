@@ -109,9 +109,9 @@ What Slack sends with a slash command or button click: `user_id` (e.g. `U04ABC12
 
 How Leave Desk identifies the person:
 
-1. `user_id` → cache (`slack:user:<id>` → `emp_id`), filled from the Employees tab's `slack_user_id` column.
-2. On a miss, `users.info` (scope `users:read.email`) returns the profile email. That email is matched, case-insensitively, against `Employees.email`.
-3. The match is cached and written back to `Employees.slack_user_id` by the background job, so the lookup happens once per person.
+1. `user_id` → cache (`slack:user:<id>` → `emp_id`). The background refresh fills it for everyone by looking up each work email on Slack (`users.lookupByEmail`, one parallel batch). A `slack_user_id` typed in the Employees tab wins, but Leave Desk itself never writes that column.
+2. On a miss, `users.info` (scope `users:read.email`) returns the profile email. It is matched, case-insensitively, against the cached email directory (built from `Employees.email`), with no sheet read.
+3. Slack IDs are kept in the cache only and never printed. `forgetSlackIds()` removes IDs an older version wrote to the sheet.
 4. The **role** (Employee, Intern, Team Lead, C-suite) and the **team** come from the Employees row, never from Slack. The approval route follows from `role_level` through `ApprovalFlow`.
 
 **Testing with one Slack account.** One Slack member ID maps to exactly one row. Put the ID (and the Slack profile email) on the row of the persona you are testing and nowhere else. After editing the sheet run `setupSlack()`; otherwise the cache refreshes within ten minutes. An ID moved to another row re-points on refresh; an ID removed from every row is forgotten on refresh. You cannot request as Employee and approve as CXO from the same Slack account in one flow; do the other half in the web app with the role picker.

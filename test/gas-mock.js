@@ -42,7 +42,7 @@ class Sheet {
   cell(r, c) { return ((this.grid[r - 1] || [])[c - 1]); }
   set(r, c, v) { (this.grid[r - 1] = this.grid[r - 1] || [])[c - 1] = v; }
   getRange(r, c, nr = 1, nc = 1) { return range(this, r, c, nr, nc); }
-  getDataRange() { return range(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
+  getDataRange() { Sheet.reads = (Sheet.reads || 0) + 1; return range(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
   getProtections() { return []; }
   protect() { return noop(); }
   clear() { this.grid = []; }
@@ -109,7 +109,7 @@ function assert_(cond, msg) { if (!cond) throw new Error(msg); }
 function makeEnv(opts) {
   const book = new Book();
   const props = {};
-  const env = { book, mail: [], fetches: [], slack: [], slackReply: null, triggers: [], triggerSeq: 0, user: opts.user, today: opts.now, cache: {}, tokenResponse: null };
+  const env = { book, sheetReads: () => Sheet.reads || 0, mail: [], fetches: [], slack: [], slackReply: null, triggers: [], triggerSeq: 0, user: opts.user, today: opts.now, cache: {}, tokenResponse: null };
   const dv = () => {
     const b = { kind: null, strict: true };
     return new Proxy(b, { get: (t, k) => {

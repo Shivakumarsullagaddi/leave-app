@@ -31,8 +31,12 @@ const SlackChannel = (() => ({
   settle(request, actor) {
     if (request.status === 'APPROVED' && !DecisionPolicy.firstIsFinal()) return 0;   // LEAVE_START: others may still reject
     const cards = SlackCache.takeCards(request.req_id);   // taken first, so a failure below never repeats the work
+    let actorSlack = '';
+    if (request.status !== 'CANCELLED') {
+      try { actorSlack = actor.slack_user_id || (SlackBot.prop('SLACK_BOT_TOKEN') ? SlackBot.userIdByEmail(actor.email) : ''); } catch (e) { actorSlack = ''; }
+    }
     SlackCache.settleClaim(request.req_id, { status: request.status, by: actor.name || '', by_emp: actor.emp_id || '',
-      slack_user_id: request.status === 'CANCELLED' ? '' : actor.slack_user_id || '', at: request.final_at || DateUtil.now() });
+      slack_user_id: actorSlack, at: request.final_at || DateUtil.now() });
     if (!cards.length || !SlackBot.prop('SLACK_BOT_TOKEN')) return 0;
     const results = SlackBot.callAll(cards.map((c) => ['chat.update', {
       channel: c.channel, ts: c.ts, text: SlackCards.settledText(request, c.emp_id), blocks: SlackCards.settledCard(request, c.emp_id),

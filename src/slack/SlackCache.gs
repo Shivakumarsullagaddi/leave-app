@@ -7,7 +7,9 @@
  * job rewrites after every change and every ten minutes.
  *
  * The refresh also links every active employee to their Slack member ID (by email, in one
- * parallel batch), so even a person's very first /leavedesk is answered from the cache.
+ * parallel batch) and caches an email → employee directory, so even a person's very first
+ * /leavedesk — or a stranger's — is answered from the cache. Slack IDs are kept in the cache
+ * only; they are never written to the sheet (an admin may still type one into slack_user_id).
  *
  * Also kept here, because the Slack path must decide without the sheet:
  *   claims  slack:claim:<req_id>  who decided first in Slack (first click wins), then the final status
@@ -25,9 +27,18 @@ const SlackCache = (() => {
   const cardsKey = (reqId) => 'SLACK_CARDS_' + reqId;
   const POLICY = 'slack:decision_lock';
 
+  const EMAILS = 'slack:emails';
+  const UNKNOWN = '-';
+  const UNKNOWN_TTL = 120;        // a stranger is re-checked after two minutes (the admin may have just added them)
+
   const snapshot = (empId) => { const v = empId ? cache().get(empKey(empId)) : null; return v ? JSON.parse(v) : null; };
-  const empIdForUser = (u) => cache().get(userKey(u)) || '';
+  const empIdForUser = (u) => { const v = cache().get(userKey(u)); return v && v !== UNKNOWN ? v : ''; };
   const linkUser = (u, empId) => cache().put(userKey(u), empId, TTL);
+  /** Slack users we just found are not in Employees, so a repeat command costs no Slack call. */
+  const markUnknown = (u) => cache().put(userKey(u), UNKNOWN, UNKNOWN_TTL);
+  const isUnknown = (u) => cache().get(userKey(u)) === UNKNOWN;
+  /** { lower-case email: emp_id } of every active employee, or null when not cached (then only the background job may decide). */
+  const emailIndex = () => { const v = cache().get(EMAILS); return v ? JSON.parse(v) : null; };
   const save = (snap) => cache().put(empKey(snap.emp_id), JSON.stringify(snap), TTL);
 
   /** FIRST_DECISION unless Settings say LEAVE_START; copied into the cache by refresh() so Slack never reads Settings. */
@@ -113,8 +124,11 @@ const SlackCache = (() => {
     }
   }
 
-  /** Builds snapshots for the given employees (or everyone active) from one read of each tab. */
-  function build(empIds) {
+  /**
+   * Builds snapshots for the given employees (or everyone active) from one read of each tab.
+   * links = { emp_id: Slack ID found by email } (full refresh only); a slack_user_id typed in the sheet wins.
+   */
+  function build(empIds, links) {
     const year = DateUtil.year(DateUtil.today());
     const calendar = Catalog.calendar();
     const types = Catalog.leaveTypes();
@@ -131,11 +145,12 @@ const SlackCache = (() => {
     Db.table('Approvals').all().forEach((a) => { (approvalsByReq[a.req_id] = approvalsByReq[a.req_id] || []).push(a); });
 
     const people = everyone.filter((e) => e.status === 'Active' && (!empIds || empIds.indexOf(e.emp_id) !== -1));
+    const slackOf = (e) => e.slack_user_id || (links && links[e.emp_id]) || '';
     const entries = {};
     people.forEach((e) => {
       const snap = {
         emp_id: e.emp_id, name: e.name, email: e.email, role_level: e.role_level, emp_type: e.emp_type,
-        team: teams[e.team_id] || '', slack_user_id: e.slack_user_id || '', year: year, built_at: DateUtil.now(), calendar: calendar,
+        team: teams[e.team_id] || '', slack_user_id: slackOf(e), year: year, built_at: DateUtil.now(), calendar: calendar,
         balances: types.map((t) => {
           const b = balances.find((x) => x.emp_id === e.emp_id && x.type_id === t.type_id) || {};
           const n = (v) => Number(v) || 0;
@@ -151,11 +166,16 @@ const SlackCache = (() => {
         approvers: approversFor(e, names),
       };
       entries[empKey(e.emp_id)] = JSON.stringify(snap);
-      if (e.slack_user_id) entries[userKey(e.slack_user_id)] = e.emp_id;
+      if (slackOf(e)) entries[userKey(slackOf(e))] = e.emp_id;
     });
+    if (!empIds) {
+      const index = {};
+      people.forEach((e) => { if (e.email) index[String(e.email).trim().toLowerCase()] = e.emp_id; });
+      entries[EMAILS] = JSON.stringify(index);
+    }
     cache().putAll(entries, TTL);
     if (!empIds) {
-      forgetMovedLinks(people);
+      forgetMovedLinks(people.map(slackOf).filter(String));
       // Someone who left (or was made inactive) must not keep applying from a six-hour-old snapshot.
       const gone = everyone.filter((e) => e.status !== 'Active');
       if (gone.length) cache().removeAll(gone.map((e) => empKey(e.emp_id)).concat(gone.filter((e) => e.slack_user_id).map((e) => userKey(e.slack_user_id))));
@@ -164,36 +184,34 @@ const SlackCache = (() => {
   }
 
   /**
-   * Links active employees that have no slack_user_id yet: their work email is looked up on Slack
-   * (one parallel batch; misses are remembered for six hours) and the ID is written to Employees.
-   * Runs in the background refresh only, never inside a Slack request.
+   * Finds the Slack member ID of every active employee with no slack_user_id in the sheet, by work
+   * email (one parallel batch; hits and misses are remembered for six hours). Returns { emp_id: ID }.
+   * Kept in the cache only — nothing is written to the sheet. Background refresh only.
    */
-  function linkUnlinked() {
-    if (!SlackBot.prop('SLACK_BOT_TOKEN')) return 0;
-    const unlinked = Directory.activeEmployees().filter((e) => !e.slack_user_id && e.email);
-    if (!unlinked.length) return 0;
+  function linkByEmail() {
+    if (!SlackBot.prop('SLACK_BOT_TOKEN')) return {};
+    const active = Directory.activeEmployees();
+    const unlinked = active.filter((e) => !e.slack_user_id && e.email);
+    if (!unlinked.length) return {};
     const taken = {};
-    Directory.activeEmployees().forEach((e) => { if (e.slack_user_id) taken[e.slack_user_id] = true; });
+    active.forEach((e) => { if (e.slack_user_id) taken[e.slack_user_id] = true; });
     let ids;
-    try { ids = SlackBot.userIdsByEmail(unlinked.map((e) => String(e.email).toLowerCase())); } catch (err) {
+    try { ids = SlackBot.userIdsByEmail(unlinked.map((e) => String(e.email).trim().toLowerCase())); } catch (err) {
       console.error('SlackCache: linking skipped: ' + err.message);
-      return 0;
+      return {};
     }
-    let linked = 0;
+    const links = {};
     unlinked.forEach((e) => {
-      const id = ids[String(e.email).toLowerCase()];
+      const id = ids[String(e.email).trim().toLowerCase()];
       if (!id || taken[id]) return;   // not on Slack, or that Slack account already belongs to another row
       taken[id] = true;
-      Db.table('Employees').update(e.emp_id, { slack_user_id: id, updated_at: DateUtil.now() });
-      Audit.log({ actor: 'slack', action: 'UPDATE', entity: 'Employees', entity_id: e.emp_id, field: 'slack_user_id', new_value: id });
-      linked++;
+      links[e.emp_id] = id;
     });
-    return linked;
+    return links;
   }
 
   /** A Slack ID removed from the sheet (or moved to another row) must stop resolving to the old person. */
-  function forgetMovedLinks(people) {
-    const now = people.map((e) => e.slack_user_id).filter(String);
+  function forgetMovedLinks(now) {
     JSON.parse(props().getProperty(LINKED) || '[]').forEach((u) => { if (now.indexOf(u) === -1) cache().remove(userKey(u)); });
     props().setProperty(LINKED, JSON.stringify(now));
   }
@@ -201,8 +219,7 @@ const SlackCache = (() => {
   /** Rewrites everyone's snapshot. Called by the background job, never by a Slack request. */
   function refresh() {
     Db.refresh();
-    linkUnlinked();
-    const ids = build(null);
+    const ids = build(null, linkByEmail());
     cache().put(POLICY, DecisionPolicy.firstIsFinal() ? 'FIRST_DECISION' : 'LEAVE_START', TTL);
     props().deleteProperty('SLACK_DIRTY');
     props().setProperty('SLACK_REFRESHED_AT', String(Date.now()));
@@ -215,6 +232,6 @@ const SlackCache = (() => {
     return snapshot(empId);
   }
 
-  return { snapshot, empIdForUser, linkUser, markDirty, isStale, refresh, load, firstIsFinal, addPending,
+  return { snapshot, empIdForUser, linkUser, markUnknown, isUnknown, emailIndex, markDirty, isStale, refresh, load, firstIsFinal, addPending,
     claimOf, claim, settleClaim, releaseClaim, rememberCards, takeCards, openCardRequests };
 })();

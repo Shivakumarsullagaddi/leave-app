@@ -83,7 +83,7 @@ const DB_SCHEMA = [
       col_('join_date', 'date', 'First working day.'),
       col_('end_date', 'date', 'Contract end (interns/contractors). Blank = ongoing. Extending this tops up leave.'),
       col_('contract_months', 'number', 'Contract length in months. Blank for ongoing full-time.'),
-      col_('slack_user_id', 'id', 'Slack member ID (e.g. U04ABC123) for @mentions. Optional.'),
+      col_('slack_user_id', 'id', 'Optional; normally leave empty. Leave Desk finds people on Slack by their email and keeps the ID in its cache, never in this sheet. Fill it only when someone\'s Slack email differs.'),
       col_('status', 'enum', 'Active or Inactive. Deactivate instead of deleting.', { values: ENUMS.EMP_STATUS }),
       col_('created_at', 'datetime', 'Row created.'),
       col_('updated_at', 'datetime', 'Row last changed.'),

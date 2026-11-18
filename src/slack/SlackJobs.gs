@@ -14,7 +14,7 @@
  * (the Sheets dashboard) are adopted — approvers closed, balance recalculated, people told, cards closed.
  * Then the snapshots are refreshed and every App Home that was ever opened is republished.
  *
- * Job kinds: submit · decide · link (write slack_user_id to Employees) · home
+ * Job kinds: submit · decide · apply_view (fill a "Setting up…" modal) · link (legacy, cache only) · home
  */
 const SlackJobs = (() => {
   const LEGACY = 'SLACK_JOBS';           // the old single-list queue, still drained after an upgrade
@@ -181,10 +181,26 @@ const SlackJobs = (() => {
       }
     },
 
-    link(job) {
-      Db.table('Employees').update(job.emp_id, { slack_user_id: job.slack_user_id, updated_at: DateUtil.now() });
-      Audit.log({ actor: 'slack', action: 'UPDATE', entity: 'Employees', entity_id: job.emp_id, field: 'slack_user_id', new_value: job.slack_user_id });
+    /** /leavedesk from someone the cache couldn't place: look them up in the sheet and fill the "Setting up…" modal. */
+    apply_view(job) {
+      try {
+        const emp = job.emp_id ? Directory.employee(job.emp_id) : Directory.byEmail(job.email);
+        if (!emp || emp.status !== 'Active') {
+          SlackCache.markUnknown(job.slack_user_id);
+          throw new AppError('NOT_REGISTERED', (job.email ? job.email + ' is' : 'Your Slack account is') + ' not in the Leave Desk directory. Ask the admin to add you.');
+        }
+        SlackCache.linkUser(job.slack_user_id, emp.emp_id);
+        const snap = SlackCache.load(emp.emp_id);
+        SlackBot.updateView(job.view_id, null, SlackCards.applyModal(snap));
+      } catch (err) {
+        if (/view_not_found|not_found/.test(String(err && err.message))) return;   // the person closed the modal meanwhile
+        if (!(err instanceof AppError)) console.error('SlackJobs: apply_view: ' + (err.stack || err));
+        try { SlackBot.updateView(job.view_id, null, SlackCards.messageModal('Leave Desk', '⚠️ ' + reason(err))); } catch (e) { /* modal closed */ }
+      }
     },
+
+    /** Older versions queued this to write the Slack ID to Employees; IDs now live in the cache only. */
+    link(job) { SlackCache.linkUser(job.slack_user_id, job.emp_id); },
 
     home(job) { rememberHomeUser(job.slack_user_id); },
   };

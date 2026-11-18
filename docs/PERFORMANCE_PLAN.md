@@ -26,9 +26,13 @@ was built and the real limits.
 ## 3. What was built
 
 ### 3.1 First `/leavedesk` never times out
-- `SlackCache.refresh()` (setupSlack + every 10 min) now links **every active employee** to their Slack ID by work email, in one parallel batch (`UrlFetchApp.fetchAll`), writes it to `Employees.slack_user_id` and caches it. Misses are remembered for 6 h.
+- `SlackCache.refresh()` (setupSlack + every 10 min) links **every active employee** to their Slack ID by work email, in one parallel batch (`UrlFetchApp.fetchAll`). It also caches an **email → employee directory**. Slack IDs live **in the cache only**: they are never written to the sheet and never printed by `checkSlack`. A `slack_user_id` typed by an admin still wins. `forgetSlackIds()` clears IDs an older version wrote.
 - Result: even a person's very first command is a cache hit. Path: verify token → cache → `views.open`. **One Slack call, no sheet read.**
-- If someone still isn't cached (added a minute ago, cache evicted), a **"Getting your balance…" modal opens immediately**, then turns into the form. Problems (not in Employees, missing `users:read.email` scope) are explained **inside that modal**, not as a vanishing error.
+- **A Slack request never reads the sheet**, so it can't time out:
+  - Slack member not in Employees: `users.info` + email directory → explained in a modal at once. Repeat tries within 2 minutes skip `users.info`, and the cache is marked for refresh so a just-added person works a minute later.
+  - Known person whose snapshot was evicted: a **"Setting up your profile…" modal opens at once**, and the background job turns it into the form (within a minute).
+  - `balance` / `requests` in that rare case: "Setting up your profile. Try again in a minute."
+  - Missing `users:read.email` scope: explained in the modal.
 
 ### 3.2 Send closes fast
 - No trigger is created. Queueing is **one Script Property write, no lock** (`SLACK_JOB_<time>_<random>`), so Send never waits behind a job writing the sheet.
@@ -78,7 +82,7 @@ This happens once per request, within about a minute.
 
 ## 6. To switch it on
 
-1. Done: pushed and deployment updated to @57. (clasp in Git Bash fails with "Content directory is a symlink"; run it from PowerShell in `C:SERS�`.)
+1. Done: pushed and deployment updated to @57. (clasp in Git Bash fails with "Content directory is a symlink"; run it from PowerShell after `Set-Location 'C:\Users\shiva\Downloads\leave-desk-src'`.)
 2. In the Settings tab, set **`DECISION_LOCK` = `FIRST_DECISION`**. Existing sheets keep their old value (`LEAVE_START`); new sheets get the new default.
 3. Run **`setupSlack()`** once. It links everyone to Slack and warms the cache.
 4. Watch Apps Script → Executions for `Slack slash_command answered in N ms`. A cached `/leavedesk` shows `token · snapshot(cache) · views.open`.
