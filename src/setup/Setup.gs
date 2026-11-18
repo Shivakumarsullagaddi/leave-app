@@ -43,8 +43,8 @@ function resetDatabase() {
  */
 function setupSlackFromMenu() {
   try {
-    const result = SlackSetup.setup();
-    SetupUi.notify('Slack setup complete', result);
+    setupSlack();
+    SetupUi.notify('Slack setup complete', 'Background trigger installed, cache warmed. Ready for testing.');
   } catch (err) {
     SetupUi.notify('Slack setup failed', err.message || String(err));
   }
