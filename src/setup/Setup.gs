@@ -4,6 +4,7 @@
  *  setupDatabase()   Safe: adds missing tabs/columns/settings, re-applies formatting,
  *                    seeds only EMPTY tables, links the web app to this spreadsheet.
  *  resetDatabase()   Wipes all rows and reloads the dummy data (menu only, asks first).
+ *  clearTestData()   Clears LeaveRequests, Approvals, LeaveBalances, AuditLog; keeps test team.
  *  checkDatabase()   Reports missing tabs or columns.
  *  setupTestTeam()   Creates the Test Team for the three test accounts (LD_CONFIG.TEST_ACCOUNTS).
  *
@@ -20,6 +21,7 @@ function onOpen() {
     .addItem('Set up test team', 'setupTestTeam')
     .addItem('Check sign-in setup', 'checkSignIn')
     .addSeparator()
+    .addItem('Clear test data (keep test team)…', 'clearTestData')
     .addItem('Reset to dummy data…', 'resetDatabase')
     .addToUi();
 }
@@ -32,6 +34,35 @@ function resetDatabase() {
   const answer = ui.alert('Reset Leave Desk data?',
     'This deletes ALL rows in every table and reloads the dummy data. Continue?', ui.ButtonSet.YES_NO);
   if (answer === ui.Button.YES) SetupEngine.run({ reset: true });
+}
+
+/**
+ * Clears all test/dummy leave data (requests, approvals, balances, audit log)
+ * while keeping the Test Team (E901–E904) intact for testing.
+ * Keeps all configuration: LeaveTypes, Policies, ApprovalFlow, Holidays, Settings, Employees/Teams.
+ */
+function clearTestData() {
+  const ui = SetupUi.get();
+  if (!ui) throw new Error('Use "Clear test data…" from the Leave Desk menu in the sheet, so it can ask you first.');
+  const answer = ui.alert('Clear test/dummy leave data?',
+    'This deletes all leave requests, approvals, balances, and audit logs.\n\nKEPT: Test Team (E901–E904), all configuration, master data.\n\nContinue?', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tables = ['LeaveRequests', 'LeaveBalances', 'Approvals', 'AuditLog'];
+  let cleared = 0;
+
+  tables.forEach((name) => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = sh.getLastRow();
+    if (last > 1) {
+      sh.getRange(2, 1, last - 1, sh.getLastColumn()).clearContent();
+      cleared++;
+    }
+  });
+
+  SetupUi.notify('Test data cleared', 'Cleared ' + cleared + ' tables.\n\nTest Team intact. Ready for real use.');
 }
 
 function checkDatabase() {
