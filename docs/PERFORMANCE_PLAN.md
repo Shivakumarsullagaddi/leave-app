@@ -1,6 +1,6 @@
 # Leave Desk — speed, determinism and edge cases (Slack)
 
-Last updated: 2026-11-18 · Status: **implemented, all tests pass** (not yet pushed to Apps Script)
+Last updated: 2026-11-18 · Status: **implemented, all tests pass, live** (commit 91c5b16, deployment AKfycbzX… @57)
 
 This replaces the first draft of this plan. That draft promised things Apps Script cannot do
 (a 10-second trigger, async work after replying, sub-500 ms replies). This version describes what
@@ -78,7 +78,7 @@ This happens once per request, within about a minute.
 
 ## 6. To switch it on
 
-1. `npx clasp push --force`, then update the existing deployment (never `create-deployment`).
+1. Done: pushed and deployment updated to @57. (clasp in Git Bash fails with "Content directory is a symlink"; run it from PowerShell in `C:SERS�`.)
 2. In the Settings tab, set **`DECISION_LOCK` = `FIRST_DECISION`**. Existing sheets keep their old value (`LEAVE_START`); new sheets get the new default.
 3. Run **`setupSlack()`** once. It links everyone to Slack and warms the cache.
 4. Watch Apps Script → Executions for `Slack slash_command answered in N ms`. A cached `/leavedesk` shows `token · snapshot(cache) · views.open`.

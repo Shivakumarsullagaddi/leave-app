@@ -125,7 +125,7 @@ User feedback: Slack replies were one-liners with no labels, the typed command v
 
 ## 7. Next steps (in order)
 
-0. **User:** push + update deployment, set Settings `DECISION_LOCK` = `FIRST_DECISION`, run `setupSlack()` once, test from two Slack accounts.
+0. Done 2026-11-18: pushed to GitHub + Apps Script, deployment AKfycbzX… updated to @57. **User:** set Settings `DECISION_LOCK` = `FIRST_DECISION`, run `setupSlack()` once, test from two Slack accounts.
 
 1. **User:** in Slack app settings add Bot Token Scope `im:write`, reinstall, paste the new token into `SLACK_BOT_TOKEN`; optionally add commands `/leave-balance`, `/leave-requests` (same Request URL); set the `/leavedesk` usage hint to `[balance | requests | help]`.
 2. **User:** `npx clasp push --force` (ask), update the existing deployment, run `setupSlack()` in the editor, then test `/leavedesk balance` from the Leave app's Messages tab.
