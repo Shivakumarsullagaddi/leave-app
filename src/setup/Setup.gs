@@ -21,6 +21,7 @@ function onOpen() {
     .addItem('Set up test team', 'setupTestTeam')
     .addItem('Check sign-in setup', 'checkSignIn')
     .addSeparator()
+    .addItem('Setup Slack (refresh cache)', 'setupSlackFromMenu')
     .addItem('Clear test data (keep test team)…', 'clearTestData')
     .addItem('Reset to dummy data…', 'resetDatabase')
     .addToUi();
@@ -34,6 +35,19 @@ function resetDatabase() {
   const answer = ui.alert('Reset Leave Desk data?',
     'This deletes ALL rows in every table and reloads the dummy data. Continue?', ui.ButtonSet.YES_NO);
   if (answer === ui.Button.YES) SetupEngine.run({ reset: true });
+}
+
+/**
+ * Wrapper for setupSlack() to run from the menu with a user-friendly notification.
+ * Installs the background trigger, warms the cache, and verifies Slack config.
+ */
+function setupSlackFromMenu() {
+  try {
+    const result = SlackSetup.setup();
+    SetupUi.notify('Slack setup complete', result);
+  } catch (err) {
+    SetupUi.notify('Slack setup failed', err.message || String(err));
+  }
 }
 
 /**
